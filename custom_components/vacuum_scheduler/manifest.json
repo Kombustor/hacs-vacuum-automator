@@ -1,0 +1,13 @@
+{
+  "domain": "vacuum_scheduler",
+  "name": "Vacuum Scheduler",
+  "codeowners": [
+    "@Kombustor"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/Kombustor/hacs-vacuum-automator",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Kombustor/hacs-vacuum-automator/issues",
+  "version": "0.1.0"
+}
