@@ -20,42 +20,35 @@ Uncomment and customize these badges if you want to use them:
 
 ## ✨ Features
 
-- **Easy Setup**: Simple configuration through the UI - no YAML required
-- **Air Quality Monitoring**: Track AQI and PM2.5 levels in real-time
-- **Filter Management**: Monitor filter life and get replacement alerts
-- **Smart Control**: Adjust fan speed, target humidity, and operating modes
-- **Child Lock**: Safety feature to prevent accidental changes
-- **Diagnostic Info**: View filter life, runtime hours, and device statistics
-- **Reconfigurable**: Change credentials anytime without removing the integration
-- **Options Flow**: Adjust settings like update interval after setup
-- **Custom Services**: Advanced control with built-in service calls
+- **Room-based scheduling**: Configure per-room vacuum and mop frequencies — the scheduler tracks when each room was last cleaned
+- **Overdue detection**: Binary sensors flag rooms that are overdue for vacuuming or mopping, with days-since-last-cleaned attributes
+- **Door & window gating**: Rooms are only cleaned when their door is open and windows are closed (configurable)
+- **Time windows**: Cleaning only runs within each room's configured time window (supports overnight windows)
+- **Batch cleaning**: `evaluate_batch` evaluates all rooms and triggers `vacuum.clean_area` for overdue rooms, grouped by vacuum and cleaning settings
+- **Dry run mode**: Simulate a batch evaluation to see which rooms would be cleaned, without touching your vacuum
+- **Critical overdue events**: Fires `vac_scheduler_critical_overdue` once per room/mode when overdue exceeds the critical threshold
+- **Door-triggered evaluation**: When a monitored door opens, batch evaluation runs automatically for the vacuums behind that door (after a configurable stabilization period)
+- **Notifications**: Optional notify entity for dry-run summaries and cleaning-started messages
+- **Per-room enable switch**: Disable scheduling for individual rooms without removing their configuration
+- **Mopping support**: Separate mop frequencies, mop intensity (water flow) presets, and `set_water_box_custom_mode` support
+- **No cloud or external API**: Everything is computed locally from your Home Assistant state (`iot_class: calculated`)
 
 **This integration will set up the following platforms.**
 
-| Platform        | Description                                              |
-| --------------- | -------------------------------------------------------- |
-| `sensor`        | Air quality index (AQI), PM2.5, filter life, and runtime |
-| `binary_sensor` | API connection status and filter replacement alert       |
-| `switch`        | Child lock and LED display controls                      |
-| `select`        | Fan speed selection (Low/Medium/High/Auto)               |
-| `number`        | Target humidity setting (30-80%)                         |
-| `button`        | Reset filter timer after replacement                     |
-| `fan`           | Air purifier fan control with speed settings             |
-
-> [!TIP]
-> **Interactive Demo:** The entities are interconnected for demonstration.
-> Press the **Reset Filter Timer** button to see **Filter Life Remaining** update to 100%.
-> Changing the **Air Purifier** fan speed syncs the **Fan Speed** select, and vice versa.
+| Platform        | Description                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| `binary_sensor` | Per-room overdue indicator (`problem` class), on when the room is overdue for vacuuming or mopping |
+| `switch`        | Per-room scheduling enable/disable switch                                                          |
 
 ## 🚀 Quick Start
 
 ### Step 1: Install the Integration
 
-**Prerequisites:** This integration requires [HACS](https://hacs.xyz/) (Home Assistant Community Store) to be installed.
+**Prerequisites:** [HACS](https://hacs.xyz/) (Home Assistant Community Store) 2.0.5 or newer, Home Assistant 2026.4.0 or newer.
 
 Click the button below to open the integration directly in HACS:
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jpawlowski&repository=hacs-vacuum-automator&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Kombustor&repository=hacs-vacuum-automator&category=integration)
 
 Then:
 
@@ -70,9 +63,10 @@ Then:
 
 If you prefer not to use HACS:
 
-1. Download the `custom_components/vacuum_scheduler/` folder from this repository
-2. Copy it to your Home Assistant's `custom_components/` directory
-3. Restart Home Assistant
+1. Download the latest release from the [releases page][releases]
+2. Extract the `custom_components/vacuum_scheduler/` folder from the archive
+3. Copy it to your Home Assistant's `custom_components/` directory
+4. Restart Home Assistant
 
 </details>
 
@@ -88,11 +82,9 @@ Click the button below to open the configuration dialog:
 
 Follow the setup wizard:
 
-1. Enter your username
-2. Enter your password
+1. Enter a **Hub Name** (e.g. "Vacuum Scheduler")
+2. Configure the **global settings** (see table below)
 3. Click Submit
-
-That's it! The integration will start loading your data.
 
 #### Option 2: Manual Configuration
 
@@ -101,171 +93,160 @@ That's it! The integration will start loading your data.
 3. Search for "Vacuum Scheduler"
 4. Follow the same setup steps as Option 1
 
-### Step 3: Adjust Settings (Optional)
+### Step 3: Add Rooms
+
+After setup, each room is added as a config **subentry** on the integration page:
+
+1. Go to **Settings** → **Devices & Services**
+2. Find **Vacuum Scheduler** and add a room
+3. For each room, configure:
+
+| Name              | Required | Description                                                        |
+| ----------------- | -------- | ------------------------------------------------------------------ |
+| Room Name         | Yes      | Unique name for the room (e.g. "Kitchen")                          |
+| Vacuum Entity     | Yes      | The vacuum entity used to clean this room                          |
+| Cleaning Area     | Yes      | Home Assistant area(s) to clean                                    |
+| Vacuum Frequency  | Yes      | How often to vacuum (1-30 days, default 3)                         |
+| Mop Frequency     | No       | How often to mop (0 = disabled; mopping always includes vacuuming) |
+| Door Sensor       | No       | Binary sensor for the room door (must be open to clean)            |
+| Window Sensor     | No       | Binary sensor for the window (blocks cleaning when open)           |
+| Time Window Start | No       | Earliest time cleaning may run (default 08:00)                     |
+| Time Window End   | No       | Latest time cleaning may run (default 20:00)                       |
+| Fan Speed         | No       | Fan speed preset for this room (overrides global default)          |
+| Mop Intensity     | No       | Water flow intensity (off/low/medium/high/auto/custom)             |
+
+> [!TIP]
+> Rooms are evaluated every 60 seconds. A room counts as **overdue** when it was
+> never cleaned or its last cleaning is older than the configured frequency.
+
+### Step 4: Adjust Settings (Optional)
 
 After setup, you can adjust options:
 
 1. Go to **Settings** → **Devices & Services**
 2. Find **Vacuum Scheduler**
-3. Click **Configure** to adjust:
-   - Update interval (how often to refresh data)
-   - Enable debug logging
+3. Click **Configure** to adjust the **Door Stabilization Period** (minimum time a door must be open before auto-triggering cleaning, 0-30 minutes, default 0)
 
-You can also **Reconfigure** your credentials anytime without removing the integration.
+You can also **Reconfigure** global settings or edit individual rooms anytime — no need to remove the integration.
 
-### Step 4: Start Using!
+### Step 5: Start Using!
 
-The integration creates several entities for your air purifier:
-
-- **Sensors**: Air quality index, PM2.5 levels, filter life remaining, total runtime
-- **Binary Sensors**: API connection status, filter replacement alert
-- **Switches**: Child lock, LED display control
-- **Select**: Fan speed (Low/Medium/High/Auto)
-- **Number**: Target humidity (30-80%)
-- **Button**: Reset filter timer
-- **Fan**: Air purifier fan control
-
-Find all entities in **Settings** → **Devices & Services** → **Vacuum Scheduler** → click on the device.
+- Add the **Overdue** binary sensors of your rooms to your dashboard
+- Call `vacuum_scheduler.evaluate_batch` from an automation (e.g. daily at 10:00) or trigger it manually in **Developer Tools** → **Services**
+- Or rely on the automatic door-trigger: when a monitored door opens, overdue rooms behind that door are evaluated automatically
 
 ## Available Entities
 
-### Sensors
+One device is created per hub; each room gets two entities:
 
-- **Air Quality Index (AQI)**: Real-time air quality measurement (0-500 scale)
-  - Includes air quality category (Good/Moderate/Unhealthy/etc.)
-  - Health recommendations based on current AQI
-- **PM2.5**: Fine particulate matter concentration in µg/m³
-- **Filter Life Remaining** (Diagnostic): Shows remaining filter life as percentage
-- **Total Runtime** (Diagnostic): Total operating hours of the device
+### Binary Sensor: `{room} Overdue`
 
-### Binary Sensors
+- **On**: The room is overdue for vacuuming and/or mopping
+- **Off**: The room is up to date
+- Attributes:
+  - `last_vacuumed` / `last_mopped`: timestamps of the last cleaning
+  - `days_since_vacuum` / `days_since_mop`: days since the last cleaning
+  - `overdue_details`: `{"vacuum": true/false, "mop": true/false}`
 
-- **API Connection**: Shows whether the connection to the API is active
-  - On: Connected and receiving data
-  - Off: Connection lost or authentication failed
-  - Shows update interval and API endpoint information
-- **Filter Replacement Needed**: Alerts when filter needs replacement
-  - Shows estimated days remaining
-  - Turns on when filter life is low
+### Switch: `{room} Enabled` (Configuration category)
 
-### Switches
-
-- **Child Lock**: Prevents accidental button presses on the device
-  - Icon changes based on state (locked/unlocked)
-- **LED Display**: Enable/disable the LED display
-  - Disabled by default - enable in entity settings if needed
-
-### Select
-
-- **Fan Speed**: Choose from Low, Medium, High, or Auto
-  - Icon changes dynamically based on selected speed
-  - Auto mode adjusts speed based on air quality
-  - Syncs bidirectionally with the Air Purifier fan entity
-
-### Number
-
-- **Target Humidity**: Set desired humidity level (30-80%)
-  - Adjustable in 5% increments
-  - Displayed as a slider in the UI
-
-### Button
-
-- **Reset Filter Timer**: Reset the filter life to 100%
-  - Press to reset after replacing the filter
-  - Instantly updates the Filter Life Remaining sensor
-
-### Fan
-
-- **Air Purifier**: Control the air purifier fan speed and power
-  - Three speed levels: Low, Medium, High
-  - Syncs bidirectionally with the Fan Speed select entity
-  - Turn on/off functionality
+- Turns scheduling for the room on or off without deleting its configuration
+- Disabled rooms are excluded from batch evaluation and door triggers
 
 ## Custom Services
 
-The integration provides services for advanced automation:
+### `vacuum_scheduler.evaluate_batch`
 
-### `vacuum_scheduler.example_action`
+Evaluate all rooms and trigger cleaning for overdue rooms with open doors.
 
-Perform a custom action (customize this for your needs).
+| Field           | Required | Description                                                                                            |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `vacuum_entity` | No       | Only evaluate rooms using this vacuum entity                                                           |
+| `dry_run`       | No       | If `true`, return the list of rooms without triggering cleaning (overrides the global dry-run setting) |
+
+For each room the evaluation checks, in order:
+
+1. Scheduling enabled (via the `{room} Enabled` switch)
+2. At least one cleaning area configured
+3. Door open (if a door sensor is configured)
+4. Windows closed (unless "Allow Cleaning When Window Open" is enabled)
+5. Overdue for vacuuming or mopping
+6. Within the room's time window
+
+Overdue rooms are sorted by urgency (most overdue first), capped at **Max Rooms Per Batch**, then grouped by vacuum entity, fan speed, and mopping needs. For each group the service:
+
+- Sets the mop intensity via `vacuum.send_command` (`set_water_box_custom_mode`) when mopping is needed
+- Sets the fan speed via `vacuum.set_fan_speed` when configured
+- Starts area cleaning via `vacuum.clean_area`
+- Records the cleaning timestamps (so the room is no longer overdue)
 
 **Example:**
 
 ```yaml
-service: vacuum_scheduler.example_action
+service: vacuum_scheduler.evaluate_batch
 data:
-  # Add your parameters here
+  dry_run: false
 ```
 
-### `vacuum_scheduler.reload_data`
+**Dry-run example:**
 
-Manually refresh data from the API without waiting for the update interval.
+```yaml
+service: vacuum_scheduler.evaluate_batch
+data:
+  dry_run: true
+```
+
+### `vacuum_scheduler.record_cleaning`
+
+Manually record that a room has been cleaned — useful after manual cleaning runs.
+
+| Field       | Required | Description                           |
+| ----------- | -------- | ------------------------------------- |
+| `room_name` | Yes      | The name of the room that was cleaned |
+| `mode`      | Yes      | `vacuum`, `mop`, or `vacuum_and_mop`  |
+| `timestamp` | No       | ISO format timestamp; defaults to now |
 
 **Example:**
 
 ```yaml
-service: vacuum_scheduler.reload_data
+service: vacuum_scheduler.record_cleaning
+data:
+  room_name: Kitchen
+  mode: vacuum_and_mop
 ```
 
-Use these services in automations or scripts for more control.
+## Events
 
-## Configuration Options
+### `vac_scheduler_critical_overdue`
 
-### During Setup
+Fired once per room and mode when the room is overdue by more than the **Critical Overdue Threshold** (default 2 days). It fires again only after the room is cleaned and becomes critical again.
 
-| Name     | Required | Description           |
-| -------- | -------- | --------------------- |
-| Username | Yes      | Your account username |
-| Password | Yes      | Your account password |
+Event data:
 
-### After Setup (Options)
+- `room_name`: the room name
+- `mode`: `vacuum` or `mop`
+- `entry_id`: the config entry ID
 
-You can change these anytime by clicking **Configure**:
+**Example automation:**
 
-| Name             | Default | Description                |
-| ---------------- | ------- | -------------------------- |
-| Update Interval  | 1 hour  | How often to refresh data  |
-| Enable Debugging | Off     | Enable extra debug logging |
+```yaml
+automation:
+  - alias: "Vacuum Scheduler - Notify on critical overdue"
+    trigger:
+      - trigger: event
+        event_type: vac_scheduler_critical_overdue
+    action:
+      - action: notify.notify
+        data:
+          title: "Vacuum Scheduler"
+          message: "{{ trigger.event.data.room_name }} is critically overdue for {{ trigger.event.data.mode }}!"
+```
 
 ## Troubleshooting
 
-### Authentication Issues
-
-#### Reauthentication
-
-If your credentials expire or change, Home Assistant will automatically prompt you to reauthenticate:
-
-1. Go to **Settings** → **Devices & Services**
-2. Look for **"Action Required"** or **"Configuration Required"** message on the integration
-3. Click **"Reconfigure"** or follow the prompt
-4. Enter your updated credentials
-5. Click Submit
-
-The integration will automatically resume normal operation with the new credentials.
-
-#### Manual Credential Update
-
-You can also update credentials at any time without waiting for an error:
-
-1. Go to **Settings** → **Devices & Services**
-2. Find **Vacuum Scheduler**
-3. Click the **3 dots menu** → **Reconfigure**
-4. Enter new username/password
-5. Click Submit
-
-#### Connection Status
-
-Monitor your connection status with the **API Connection** binary sensor:
-
-- **On** (Connected): Integration is receiving data normally
-- **Off** (Disconnected): Connection lost or authentication failed
-  - Check the binary sensor attributes for diagnostic information
-  - Verify credentials if authentication failed
-  - Check network connectivity
-
 ### Enable Debug Logging
 
-To enable debug logging for this integration, add the following to your `configuration.yaml`:
+Add the following to your `configuration.yaml`:
 
 ```yaml
 logger:
@@ -274,25 +255,24 @@ logger:
     custom_components.vacuum_scheduler: debug
 ```
 
-### Common Issues
+### Rooms Never Get Cleaned
 
-#### Authentication Errors
+Check these, in order:
 
-If you receive authentication errors:
+1. The `{room} Enabled` switch is on
+2. The room has at least one cleaning area configured
+3. The door sensor is open (if configured) — closed doors block batch evaluation
+4. Window sensors are closed (unless "Allow Cleaning When Window Open" is enabled)
+5. The current time is within the room's time window
+6. The vacuum entity supports `vacuum.clean_area`
 
-1. Verify your username and password are correct
-2. Check that your account has the necessary permissions
-3. Wait for the automatic reauthentication prompt, or manually reconfigure
-4. Check the API Connection binary sensor for status
+Run `vacuum_scheduler.evaluate_batch` with `dry_run: true` and check the returned service response for the evaluated/skipped rooms — then review the debug logs for the skip reason.
 
-#### Device Not Responding
+### Door-Triggered Cleaning Does Not Start
 
-If your device is not responding:
-
-1. Check the **API Connection** binary sensor - it should be "On"
-2. Check your network connection
-3. Verify the device is powered on
-4. Check the integration diagnostics (Settings → Devices & Services → Vacuum Scheduler → 3 dots → Download diagnostics)
+- The door sensor must be configured on the room and report `on` when open
+- Check the **Door Stabilization Period** option — the evaluation only runs after the door has been open that long
+- Verify the vacuum entity is set to a value the room config expects and the room is overdue within its time window
 
 ## 🤝 Contributing
 
@@ -330,7 +310,7 @@ You'll need these installed locally:
   | ------------------------------------------------------------------------------------------------------------------------ | :------: | :------: | :--------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | [Docker Desktop](https://www.docker.com/products/docker-desktop/)                                                        |    ✅    |    ✅    |     ✅     | **Easiest starting point for all platforms.** GUI-based, well-documented, one installer. Uses WSL2 as default backend on Windows (Hyper-V also available). Installation requires admin rights; daily use does not. Free for personal use. |
   | [OrbStack](https://orbstack.dev/) ⭐                                                                                     |    ✅    |    —     |     —      | **Recommended for macOS** once Docker Desktop feels slow. Starts in ~2s, much lighter on RAM/CPU, full Docker API compatibility. Free for personal use.                                                                                   |
-  | [Docker CE](https://docs.docker.com/engine/install/) (native) ⭐                                                         |    —     |    ✅    |     —      | **Recommended for Linux.** Install directly via your package manager — no VM, no GUI, no overhead. Free.                                                                                                                                  |
+  | [Docker CE](https://docs.docker.com/engine/install/) (native) ⭐                                                         |    —     |    ✅    |     —      | **Recommended for Linux.** Install directly via your package manager — no VM, no overhead. Free.                                                                                                                                          |
   | [WSL2](https://learn.microsoft.com/windows/wsl/install) + [Docker CE](https://docs.docker.com/engine/install/ubuntu/) ⭐ |    —     |    —     |     ✅     | **Recommended for Windows** once you're comfortable with WSL2. Docker runs natively inside WSL2 — no GUI overhead. Requires one-time WSL2 setup. Free.                                                                                    |
   | [Rancher Desktop](https://rancherdesktop.io/)                                                                            |    ✅    |    ✅    |     ✅     | Open source by SUSE. GUI-based, uses WSL2 on Windows. Good alternative to Docker Desktop. Free.                                                                                                                                           |
   | [Colima](https://github.com/abiosoft/colima)                                                                             |    ✅    |    ✅    |     —      | CLI-only, very lightweight. Good for terminal-focused workflows. Free.                                                                                                                                                                    |
@@ -380,15 +360,6 @@ You'll need these installed locally:
 
 ---
 
-## 🤖 AI-Assisted Development
-
-> [!NOTE]
-> **Transparency Notice:** This integration was developed with assistance from AI coding agents (GitHub Copilot, Claude, and others). While the codebase follows Home Assistant Core standards, AI-generated code may not be reviewed or tested to the same extent as manually written code. AI tools were used to generate boilerplate code, implement standard integration features (config flow, coordinator, entities), ensure code quality and type safety, and write documentation. If you encounter unexpected behavior, please [open an issue](../../issues) on GitHub.
->
-> _This section can be removed or modified if AI assistance was not used in your integration's development._
-
----
-
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -407,10 +378,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 [maintenance-shield]: https://img.shields.io/badge/maintainer-%40Kombustor-blue.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/Kombustor/hacs-vacuum-automator.svg?style=for-the-badge
 [releases]: https://github.com/Kombustor/hacs-vacuum-automator/releases
-[user_profile]: https://github.com/jpawlowski
+[user_profile]: https://github.com/Kombustor
 
 <!-- Optional badge definitions - uncomment if needed:
-[buymecoffee]: https://www.buymeacoffee.com/jpawlowski
+[buymecoffee]: https://www.buymeacoffee.com/Kombustor
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge
 [discord]: https://discord.gg/Qa5fW2R
 [discord-shield]: https://img.shields.io/discord/330944238910963714.svg?style=for-the-badge

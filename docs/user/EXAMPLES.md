@@ -1,159 +1,168 @@
 # Examples
 
-This page provides ready-to-use examples for automations, dashboards, and blueprints
-with the Vacuum Scheduler custom integration.
+This page provides ready-to-use examples for automations and dashboards with the Vacuum Scheduler custom integration.
 
-Replace entity IDs like `sensor.device_name_*` with your actual entity IDs after
-setting up the integration.
+Replace entity IDs like `binary_sensor.kitchen_overdue` with your actual entity IDs (they are derived from your room names).
 
 ## Automations
 
-### Notify when a sensor exceeds a threshold
+### Daily batch cleaning
+
+Evaluate all rooms every morning and clean overdue rooms with open doors:
 
 ```yaml
 automation:
-  - alias: "Alert when sensor is high"
-    trigger:
-      - trigger: numeric_state
-        entity_id: sensor.device_name_air_quality
-        above: 100
-    action:
-      - action: notify.notify
-        data:
-          title: "Air quality alert"
-          message: "Sensor value exceeded 100!"
-```
-
-### Turn on a switch when connectivity is lost
-
-```yaml
-automation:
-  - alias: "React to connectivity loss"
-    trigger:
-      - trigger: state
-        entity_id: binary_sensor.device_name_connectivity
-        to: "off"
-        for:
-          minutes: 5
-    action:
-      - action: switch.turn_off
-        target:
-          entity_id: switch.device_name_switch
-```
-
-### Call a service action on schedule
-
-```yaml
-automation:
-  - alias: "Reset filter counter weekly"
+  - alias: "Vacuum Scheduler - Daily batch"
     trigger:
       - trigger: time
-        at: "03:00:00"
+        at: "10:00:00"
+    action:
+      - action: vacuum_scheduler.evaluate_batch
+```
+
+### Daily batch with notification
+
+The integration notifies via the **Notify Entity** configured during setup, so no extra service call is needed:
+
+```yaml
+automation:
+  - alias: "Vacuum Scheduler - Daily batch with notification"
+    trigger:
+      - trigger: time
+        at: "10:00:00"
+    action:
+      - action: vacuum_scheduler.evaluate_batch
+```
+
+### Weekly dry run report
+
+Preview which rooms would be cleaned, without triggering the vacuum:
+
+```yaml
+automation:
+  - alias: "Vacuum Scheduler - Weekly dry run"
+    trigger:
+      - trigger: time
+        at: "09:00:00"
     condition:
       - condition: time
         weekday:
           - mon
     action:
-      - action: vacuum_scheduler.example_service
-        target:
-          entity_id: button.device_name_reset_filter
+      - action: vacuum_scheduler.evaluate_batch
+        data:
+          dry_run: true
 ```
 
-### Use a blueprint for threshold alerts
+### Notify when a room becomes critically overdue
 
-Save this as a blueprint file and import it in Home Assistant:
+The integration fires `vac_scheduler_critical_overdue` (once per room and mode) when a room is overdue by more than the critical threshold:
 
 ```yaml
-blueprint:
-  name: Vacuum Scheduler — Threshold Alert
-  description: Send a notification when a sensor exceeds a configurable threshold.
-  domain: automation
-  input:
-    sensor_entity:
-      name: Sensor
-      selector:
-        entity:
-          domain: sensor
-          integration: vacuum_scheduler
-    threshold:
-      name: Threshold value
-      selector:
-        number:
-          min: 0
-          max: 1000
-    notify_target:
-      name: Notification service
-      default: notify.notify
-      selector:
-        text:
+automation:
+  - alias: "Vacuum Scheduler - Critical overdue alert"
+    trigger:
+      - trigger: event
+        event_type: vac_scheduler_critical_overdue
+    action:
+      - action: notify.notify
+        data:
+          title: "Vacuum Scheduler"
+          message: >-
+            {{ trigger.event.data.room_name }} is critically overdue for
+            {{ trigger.event.data.mode }}!
+```
 
-trigger:
-  - trigger: numeric_state
-    entity_id: !input sensor_entity
-    above: !input threshold
+### Record cleaning after a manual vacuum run
 
-action:
-  - action: !input notify_target
-    data:
-      message: >-
-        {{ state_attr(trigger.entity_id, 'friendly_name') }}
-        exceeded {{ threshold }} (current value: {{ trigger.to_state.state }}).
+Use `record_cleaning` to keep the scheduler accurate when you clean manually:
+
+```yaml
+automation:
+  - alias: "Record manual kitchen cleaning"
+    trigger:
+      - trigger: state
+        entity_id: vacuum.roborock
+        to: "docked"
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.from_state.state in ['cleaning', 'returning'] }}
+    action:
+      - action: vacuum_scheduler.record_cleaning
+        data:
+          room_name: Kitchen
+          mode: vacuum
+```
+
+### Pause scheduling for a room while on vacation
+
+```yaml
+automation:
+  - alias: "Disable kitchen scheduling on vacation"
+    trigger:
+      - trigger: state
+        entity_id: input_boolean.vacation_mode
+        to: "on"
+    action:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.kitchen_enabled
+```
+
+```yaml
+automation:
+  - alias: "Re-enable kitchen scheduling after vacation"
+    trigger:
+      - trigger: state
+        entity_id: input_boolean.vacation_mode
+        to: "off"
+    action:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.kitchen_enabled
+```
+
+### Only evaluate a single vacuum
+
+```yaml
+service: vacuum_scheduler.evaluate_batch
+data:
+  vacuum_entity: vacuum.roborock
 ```
 
 ## Dashboard Cards
 
-### Sensor value card
-
-```yaml
-type: sensor
-entity: sensor.device_name_air_quality
-name: Air Quality
-graph: line
-```
-
-### Device summary — entities card
+### Room status — entities card
 
 ```yaml
 type: entities
-title: My Device
+title: Vacuum Scheduler
 entities:
-  - entity: sensor.device_name_air_quality
-    name: Air Quality
-  - entity: binary_sensor.device_name_connectivity
-    name: Connected
-  - entity: binary_sensor.device_name_filter
-    name: Filter Status
-  - entity: switch.device_name_switch
-    name: Power
-  - entity: select.device_name_fan_speed
-    name: Fan Speed
-  - entity: number.device_name_threshold
-    name: Threshold
+  - binary_sensor.kitchen_overdue
+  - binary_sensor.living_room_overdue
+  - switch.kitchen_enabled
+  - switch.living_room_enabled
 ```
 
-### Status badge — multiple entities
+### Overdue badge — glance card
 
 ```yaml
 type: glance
-title: Device Status
+title: Overdue Rooms
 entities:
-  - entity: binary_sensor.device_name_connectivity
-    name: Online
-  - entity: sensor.device_name_air_quality
-    name: Air Quality
-  - entity: binary_sensor.device_name_filter
-    name: Filter
+  - binary_sensor.kitchen_overdue
+  - binary_sensor.living_room_overdue
+  - binary_sensor.bathroom_overdue
 show_state: true
 ```
 
-### History graph
+### Last cleaned attributes
 
-```yaml
-type: history-graph
-title: Air Quality (last 24 h)
-entities:
-  - entity: sensor.device_name_air_quality
-hours_to_show: 24
+The overdue binary sensors expose `last_vacuumed`, `last_mopped`, `days_since_vacuum`, `days_since_mop`, and `overdue_details` attributes — usable in templates:
+
+```jinja
+{{ state_attr('binary_sensor.kitchen_overdue', 'days_since_vacuum') }} days
 ```
 
 ## Related Documentation

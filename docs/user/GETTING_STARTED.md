@@ -4,13 +4,16 @@ This guide will help you install and set up the Vacuum Scheduler custom integrat
 
 ## Prerequisites
 
-- Home Assistant 2025.7.0 or newer
-- HACS (Home Assistant Community Store) installed
-- Network connectivity to [external service/device]
+- Home Assistant 2026.4.0 or newer
+- HACS (Home Assistant Community Store) 2.0.5 or newer
+- A vacuum entity that supports the `vacuum.clean_area` service (e.g. Roborock, Dreame, etc.)
+- Optional: binary sensors for doors and windows, a `notify` entity
 
 ## Installation
 
 ### Via HACS (Recommended)
+
+The easiest way is the one-click button from the [README](../README.md). Alternatively:
 
 1. Open HACS in your Home Assistant instance
 2. Go to "Integrations"
@@ -26,7 +29,7 @@ This guide will help you install and set up the Vacuum Scheduler custom integrat
 ### Manual Installation
 
 1. Download the latest release from the [releases page](https://github.com/Kombustor/hacs-vacuum-automator/releases)
-2. Extract the `vacuum_scheduler` folder from the archive
+2. Extract the `custom_components/vacuum_scheduler/` folder from the archive
 3. Copy it to `custom_components/vacuum_scheduler/` in your Home Assistant configuration directory
 4. Restart Home Assistant
 
@@ -39,130 +42,113 @@ After installation, add the integration:
 3. Search for "Vacuum Scheduler"
 4. Follow the configuration steps:
 
-### Step 1: Connection Information
+### Step 1: Hub Name
 
-Enter the required connection details:
+Enter a name for the hub (default: "Vacuum Scheduler"). Click **Submit**.
 
-- **Host/IP Address:** The hostname or IP address of your device/service
-- **API Key/Token:** Your authentication credentials (if applicable)
-- **Port:** Connection port (default: 8080)
+### Step 2: Global Configuration
 
-Click **Submit** to test the connection.
+Configure global settings for the scheduler:
 
-### Step 2: Configuration Options
-
-Configure optional settings:
-
-- **Update Interval:** How often to poll for updates (default: 5 minutes)
-- **Name:** Friendly name for this integration instance
+| Option                            | Default | Description                                                                 |
+| --------------------------------- | ------- | --------------------------------------------------------------------------- |
+| Notify Entity                     | -       | Optional notify entity (e.g. `notify.mobile_app_phone`) for batch summaries |
+| Global Dry Run Mode               | Off     | Simulate cleaning without calling the vacuum                                |
+| Max Rooms Per Batch               | 5       | Maximum rooms cleaned in a single batch (1-20)                              |
+| Allow Cleaning When Window Open   | Off     | Permit cleaning even when window sensors report open                        |
+| Critical Overdue Threshold (days) | 2       | Days beyond frequency before a room is critically overdue (1-7)             |
+| Default Fan Speed                 | -       | Fan speed preset applied when a room has no override                        |
+| Default Mop Intensity             | -       | Water flow intensity applied when a room has no override                    |
 
 Click **Submit** to complete setup.
 
+### Step 3: Add Rooms
+
+The integration does nothing until you add rooms. Rooms are added as config subentries on the **Vacuum Scheduler** integration page.
+
+For each room, you configure:
+
+| Field             | Required | Description                                                          |
+| ----------------- | -------- | -------------------------------------------------------------------- |
+| Room Name         | Yes      | Unique name (e.g. "Kitchen")                                         |
+| Vacuum Entity     | Yes      | The vacuum used for this room                                        |
+| Cleaning Area     | Yes      | Home Assistant area(s) to clean (one or more)                        |
+| Vacuum Frequency  | Yes      | Days between vacuuming (1-30, default 3)                             |
+| Mop Frequency     | No       | Days between mopping; 0 disables mopping (mopping implies vacuuming) |
+| Door Sensor       | No       | Binary sensor that is `on` when the door is open                     |
+| Window Sensor     | No       | Binary sensor that is `on` when a window is open                     |
+| Time Window Start | No       | Earliest cleaning time (default 08:00)                               |
+| Time Window End   | No       | Latest cleaning time (default 20:00)                                 |
+| Fan Speed         | No       | Room-specific fan speed preset (overrides global default)            |
+| Mop Intensity     | No       | Room-specific water flow intensity (overrides global default)        |
+
+> [!NOTE]
+> Door sensors are optional but recommended: a room is only considered for batch cleaning while its door is open, and opening the door automatically triggers an evaluation for the rooms behind it.
+
 ## What Gets Created
 
-After successful setup, the integration creates:
+### Device
 
-### Devices
+One hub device named after your hub name. All room entities belong to it.
 
-- **Device Name:** Main device representing your connected service/hardware
-  - Model information
-  - Software version
-  - Configuration URL (link to device web interface)
+### Entities (per room)
 
-### Entities
-
-The following entities are automatically created:
-
-#### Sensors
-
-- `sensor.<device_name>_<sensor_name>` - Descriptive sensor measurements
-- More sensors as applicable to your setup
-
-#### Binary Sensors
-
-- `binary_sensor.<device_name>_<sensor_name>` - On/off status indicators
-
-#### Switches
-
-- `switch.<device_name>_<switch_name>` - Controllable on/off switches
-
-#### Other Platforms
-
-Additional entities may be created depending on your device capabilities.
+| Entity                         | Type          | Purpose                                  |
+| ------------------------------ | ------------- | ---------------------------------------- |
+| `binary_sensor.<room>_overdue` | binary_sensor | On when the room is overdue for cleaning |
+| `switch.<room>_enabled`        | switch        | Enables/disables scheduling for the room |
 
 ## First Steps
 
 ### Dashboard Cards
 
-Add entities to your dashboard:
-
-1. Go to your dashboard
-2. Click **Edit Dashboard** → **Add Card**
-3. Choose card type (e.g., "Entities", "Glance")
-4. Select entities from "Vacuum Scheduler"
-
-Example entities card:
+Add your rooms' overdue binary sensors to a dashboard:
 
 ```yaml
 type: entities
 title: Vacuum Scheduler
 entities:
-  - sensor.device_name_sensor
-  - binary_sensor.device_name_connectivity
-  - switch.device_name_switch
+  - binary_sensor.kitchen_overdue
+  - binary_sensor.living_room_overdue
+  - switch.kitchen_enabled
 ```
 
 ### Automations
 
-Use the integration in automations:
-
-**Example - Trigger on sensor change:**
+The typical setup is a daily batch evaluation:
 
 ```yaml
 automation:
-  - alias: "React to sensor value"
-    trigger:
-      - trigger: state
-        entity_id: sensor.device_name_sensor
-    action:
-      - action: notify.notify
-        data:
-          message: "Sensor changed to {{ trigger.to_state.state }}"
-```
-
-**Example - Control switch based on time:**
-
-```yaml
-automation:
-  - alias: "Turn on in morning"
+  - alias: "Vacuum Scheduler - Daily batch"
     trigger:
       - trigger: time
-        at: "07:00:00"
+        at: "10:00:00"
     action:
-      - action: switch.turn_on
-        target:
-          entity_id: switch.device_name_switch
+      - action: vacuum_scheduler.evaluate_batch
 ```
+
+Test it first with `dry_run: true` and check the service response to see which rooms would be cleaned.
+
+See [EXAMPLES.md](./EXAMPLES.md) for more automation examples.
 
 ## Troubleshooting
 
-### Connection Failed
+### Rooms Never Get Cleaned
 
-If setup fails with connection errors:
+1. Check that the `{room} Enabled` switch is on
+2. Verify the room has at least one cleaning area configured
+3. Door closed? Batch evaluation skips rooms with a closed door
+4. Window open? Cleaning is blocked unless "Allow Cleaning When Window Open" is enabled
+5. Check the room's time window — cleaning only runs within it
+6. Verify the vacuum supports `vacuum.clean_area`
 
-1. Verify the host/IP address is correct and reachable
-2. Check that the API key/token is valid
-3. Ensure no firewall is blocking the connection
-4. Check Home Assistant logs for detailed error messages
+Run `vacuum_scheduler.evaluate_batch` with `dry_run: true` and inspect the service response for the number of evaluated, overdue, and door-skipped rooms.
 
-### Entities Not Updating
+### Door-Triggered Cleaning Does Not Start
 
-If entities show "Unavailable" or don't update:
-
-1. Check that the device/service is online
-2. Verify API credentials haven't expired
-3. Review logs: **Settings** → **System** → **Logs**
-4. Try reloading the integration
+- The door sensor must be configured on the room and report `on` when open
+- Check the **Door Stabilization Period** option (Configure) — evaluation only runs after the door stayed open that long
+- The room must be overdue and inside its time window
 
 ### Debug Logging
 
@@ -187,5 +173,5 @@ Add this to `configuration.yaml`, restart, and reproduce the issue. Check logs f
 
 For help and discussion:
 
-- [GitHub Discussions](https://github.com/Kombustor/hacs-vacuum-automator/discussions)
+- [GitHub Issues](https://github.com/Kombustor/hacs-vacuum-automator/issues)
 - [Home Assistant Community Forum](https://community.home-assistant.io/)

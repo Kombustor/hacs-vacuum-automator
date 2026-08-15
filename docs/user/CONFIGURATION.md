@@ -2,46 +2,131 @@
 
 This document describes all configuration options and settings available in the Vacuum Scheduler custom integration.
 
-## Integration Configuration
+## Overview
 
-### Initial Setup Options
+Vacuum Scheduler is a **hub** integration: one config entry holds global settings, and each room is a config **subentry**. All logic is computed locally — there is no external API, host, or credentials to configure.
 
-These options are configured during initial setup via the Home Assistant UI.
+## Global Configuration
 
-#### Connection Settings
+Configured during initial setup (and editable anytime via the integration's **Reconfigure** menu).
 
-| Option      | Type    | Required | Default | Description                                  |
-| ----------- | ------- | -------- | ------- | -------------------------------------------- |
-| **Host**    | string  | Yes      | -       | Hostname or IP address of the device/service |
-| **Port**    | integer | No       | 8080    | Connection port                              |
-| **API Key** | string  | Yes\*    | -       | Authentication key or token                  |
-| **Use SSL** | boolean | No       | false   | Enable HTTPS connection                      |
+| Option                            | Type    | Default | Description                                                                 |
+| --------------------------------- | ------- | ------- | --------------------------------------------------------------------------- |
+| Notify Entity                     | entity  | -       | Optional notify entity (e.g. `notify.mobile_app_phone`) for batch summaries |
+| Global Dry Run Mode               | boolean | Off     | Simulate cleaning: evaluate and report, but never call the vacuum           |
+| Max Rooms Per Batch               | number  | 5       | Maximum number of rooms cleaned in a single batch (1-20)                    |
+| Allow Cleaning When Window Open   | boolean | Off     | Permit cleaning even when window sensors report open                        |
+| Critical Overdue Threshold (days) | number  | 2       | Days beyond the frequency before a room is critically overdue (1-7)         |
+| Default Fan Speed                 | text    | -       | Fan speed preset used when a room has no override                           |
+| Default Mop Intensity             | select  | -       | Water flow intensity used when a room has no override                       |
 
-\*Required if the device/service requires authentication.
+### Mop Intensity Options
 
-#### Update Settings
+`off`, `low`, `medium`, `high`, `auto`, `custom` — mapped to `set_water_box_custom_mode` command parameters when mopping.
 
-| Option              | Type              | Required | Default  | Description                                         |
-| ------------------- | ----------------- | -------- | -------- | --------------------------------------------------- |
-| **Update Interval** | integer (seconds) | No       | 300      | How often to poll for updates (minimum: 30 seconds) |
-| **Name**            | string            | No       | "Device" | Friendly name for the integration instance          |
+## Room Configuration (Subentries)
 
-### Options Flow (Reconfiguration)
+Each room is added and edited via the subentry flow on the **Vacuum Scheduler** integration page.
 
-After initial setup, you can modify settings:
+| Field             | Required | Default | Description                                                           |
+| ----------------- | -------- | ------- | --------------------------------------------------------------------- |
+| Room Name         | Yes      | -       | Unique room name (duplicates are rejected)                            |
+| Vacuum Entity     | Yes      | -       | Vacuum entity for this room                                           |
+| Cleaning Area     | Yes      | -       | Home Assistant area(s) to clean (multi-select)                        |
+| Vacuum Frequency  | Yes      | 3       | Days between vacuuming (1-30)                                         |
+| Mop Frequency     | No       | 0       | Days between mopping; 0 = disabled. Mopping always includes vacuuming |
+| Door Sensor       | No       | -       | Binary sensor, `on` = door open                                       |
+| Window Sensor     | No       | -       | Binary sensor, `on` = window open                                     |
+| Time Window Start | No       | 08:00   | Earliest time cleaning may start                                      |
+| Time Window End   | No       | 20:00   | Latest time cleaning may start (overnight windows supported)          |
+| Fan Speed         | No       | -       | Room-specific fan speed preset                                        |
+| Mop Intensity     | No       | -       | Room-specific water flow intensity                                    |
 
-1. Go to **Settings** → **Devices & Services**
-2. Find "Vacuum Scheduler"
-3. Click **Configure**
-4. Modify settings
-5. Click **Submit**
+## Options Flow
 
-**Available options:**
+After setup, click **Configure** on the integration to adjust:
 
-- Update interval
-- Name/identifier
-- Connection timeout
-- Additional features (device-specific)
+| Option                    | Default | Description                                                          |
+| ------------------------- | ------- | -------------------------------------------------------------------- |
+| Door Stabilization Period | 0       | Minutes a door must stay open before auto-triggering cleaning (0-30) |
+
+## How Evaluation Works
+
+The coordinator evaluates all rooms every 60 seconds and updates the overdue binary sensors. A room is overdue when:
+
+- it was never cleaned, or
+- the time since the last cleaning exceeds the configured frequency.
+
+Mopping overdue always implies vacuuming overdue.
+
+The `vacuum_scheduler.evaluate_batch` service additionally applies, in order:
+
+1. `{room} Enabled` switch on
+2. At least one cleaning area configured
+3. Door open (if a door sensor is configured)
+4. Windows closed (unless **Allow Cleaning When Window Open** is enabled)
+5. Overdue for vacuuming and/or mopping
+6. Current time within the room's time window
+
+Overdue rooms are sorted by urgency (most overdue first), capped at **Max Rooms Per Batch**, and grouped by vacuum entity, fan speed, and mopping needs before cleaning is triggered.
+
+## Services
+
+### `vacuum_scheduler.evaluate_batch`
+
+Evaluate all rooms and trigger cleaning for overdue rooms with open doors.
+
+| Field           | Type    | Required | Description                                                                             |
+| --------------- | ------- | -------- | --------------------------------------------------------------------------------------- |
+| `vacuum_entity` | entity  | No       | Restrict evaluation to rooms using this vacuum entity                                   |
+| `dry_run`       | boolean | No       | If true, only report which rooms would be cleaned; overrides the global dry-run setting |
+
+The service response contains `dry_run`, `rooms_evaluated`, `rooms_overdue`, `rooms_skipped_door_closed`, the per-room groups that would be/were cleaned, and any errors.
+
+**Example:**
+
+```yaml
+service: vacuum_scheduler.evaluate_batch
+data:
+  dry_run: false
+```
+
+### `vacuum_scheduler.record_cleaning`
+
+Manually record a cleaning for a room.
+
+| Field       | Type   | Required | Description                           |
+| ----------- | ------ | -------- | ------------------------------------- |
+| `room_name` | string | Yes      | Name of the room that was cleaned     |
+| `mode`      | select | Yes      | `vacuum`, `mop`, or `vacuum_and_mop`  |
+| `timestamp` | string | No       | ISO format timestamp; defaults to now |
+
+**Example:**
+
+```yaml
+service: vacuum_scheduler.record_cleaning
+data:
+  room_name: Kitchen
+  mode: vacuum_and_mop
+  timestamp: "2026-06-10T09:30:00"
+```
+
+## Events
+
+### `vac_scheduler_critical_overdue`
+
+Fired once per room and mode when the room is overdue by more than the **Critical Overdue Threshold** (default 2 days). Refires only after the room is cleaned and becomes critical again.
+
+| Event data  | Description              |
+| ----------- | ------------------------ |
+| `room_name` | Name of the overdue room |
+| `mode`      | `vacuum` or `mop`        |
+| `entry_id`  | The config entry ID      |
+
+## Automatic Triggers
+
+- **Door listeners**: when a configured door sensor turns `on`, batch evaluation runs automatically for the vacuums behind that door after the **Door Stabilization Period** elapses. Timers are cancelled if the door closes again.
+- **Coordinator**: overdue state is recomputed every 60 seconds; critical-overdue events and entity updates are driven from there.
 
 ## Entity Configuration
 
@@ -54,114 +139,30 @@ Customize entities via the UI or `configuration.yaml`:
 1. Go to **Settings** → **Devices & Services** → **Entities**
 2. Find and click the entity
 3. Click the settings icon
-4. Modify:
-   - Entity ID
-   - Name
-   - Icon
-   - Device class (for applicable entities)
-   - Area assignment
+4. Modify name, icon, or area assignment
 
 #### Via configuration.yaml
 
 ```yaml
 homeassistant:
   customize:
-    sensor.device_name_sensor:
-      friendly_name: "Custom Sensor Name"
-      icon: mdi:custom-icon
-      unit_of_measurement: "units"
+    binary_sensor.kitchen_overdue:
+      friendly_name: "Kitchen Needs Cleaning"
 ```
 
 ### Disabling Entities
 
-If you don't need certain entities:
+If you don't need a specific entity:
 
 1. Go to **Settings** → **Devices & Services** → **Entities**
-2. Find the entity
-3. Click it, then click **Settings** icon
-4. Toggle **Enable entity** off
+2. Find the entity, click it, then click the settings icon
+3. Toggle **Enable entity** off
 
-Disabled entities won't update or consume resources.
+Note: use the `{room} Enabled` switch to pause scheduling for a room — it does not remove the room configuration.
 
-## Services
+## Multiple Instances
 
-The integration provides the following services:
-
-### `vacuum_scheduler.example_service`
-
-Execute an example service action on the device.
-
-**Service data:**
-
-| Parameter   | Type           | Required | Description                                      |
-| ----------- | -------------- | -------- | ------------------------------------------------ |
-| `entity_id` | string or list | No       | Target entity/entities (if omitted, targets all) |
-| `parameter` | string         | Yes      | Service-specific parameter                       |
-| `value`     | integer        | No       | Numeric value for the action                     |
-
-**Example:**
-
-```yaml
-service: vacuum_scheduler.example_service
-target:
-  entity_id: switch.device_name_switch
-data:
-  parameter: "setting_name"
-  value: 42
-```
-
-### Using Services in Automations
-
-```yaml
-automation:
-  - alias: "Call service at sunset"
-    trigger:
-      - trigger: sun
-        event: sunset
-    action:
-      - action: vacuum_scheduler.example_service
-        target:
-          entity_id: switch.device_name_switch
-        data:
-          parameter: "mode"
-          value: 1
-```
-
-## Advanced Configuration
-
-### Multiple Instances
-
-You can add multiple instances of this integration for different devices:
-
-1. Go to **Settings** → **Devices & Services**
-2. Click **+ Add Integration**
-3. Search for "Vacuum Scheduler"
-4. Configure with different connection details
-
-Each instance creates separate entities with unique entity IDs.
-
-### Network Configuration
-
-If the device is on a different network or behind a firewall:
-
-- Ensure ports are open (default: 8080)
-- Configure port forwarding if needed
-- Consider VPN for remote access
-- Some devices may require static IP addresses
-
-### Polling Behavior
-
-The integration uses polling to fetch updates:
-
-- **Minimum interval:** 30 seconds (prevents overloading the device)
-- **Recommended interval:** 5 minutes (default)
-- **Longer intervals:** Save resources but reduce responsiveness
-
-Adjust based on your needs:
-
-- Real-time monitoring: 30-60 seconds
-- Regular updates: 5 minutes
-- Slow-changing values: 15-30 minutes
+You can add multiple instances of this integration for different hubs (e.g. upstairs/downstairs vacuums). Each instance has its own global settings, rooms, and entities.
 
 ## Diagnostic Data
 
@@ -172,70 +173,15 @@ The integration provides diagnostic data for troubleshooting:
 3. Click on the device
 4. Click **Download Diagnostics**
 
-Diagnostic data includes:
-
-- Connection status
-- Last update timestamp
-- API response data
-- Entity states
-- Error history
-
-**Privacy note:** Diagnostic data may contain sensitive information. Review before sharing.
-
-## Blueprints
-
-The integration works with Home Assistant Blueprints for reusable automations:
-
-### Example Blueprint
-
-```yaml
-blueprint:
-  name: Vacuum Scheduler Alert
-  description: Send notification when sensor exceeds threshold
-  domain: automation
-  input:
-    sensor_entity:
-      name: Sensor
-      selector:
-        entity:
-          domain: sensor
-          integration: vacuum_scheduler
-    threshold:
-      name: Threshold
-      selector:
-        number:
-          min: 0
-          max: 100
-
-trigger:
-  - trigger: numeric_state
-    entity_id: !input sensor_entity
-    above: !input threshold
-
-action:
-  - action: notify.notify
-    data:
-      message: "Sensor exceeded threshold!"
-```
-
-## Configuration Examples
-
-See [EXAMPLES.md](./EXAMPLES.md) for complete automation and dashboard examples.
-
 ## Troubleshooting Configuration
 
 ### Config Entry Fails to Load
 
-If the integration fails to load after configuration:
-
 1. Check Home Assistant logs for errors
-2. Verify connection details are correct
-3. Test connectivity from Home Assistant to the device
-4. Try removing and re-adding the integration
+2. Verify you have no duplicate hub names (they are used as unique IDs)
+3. Try removing and re-adding the integration
 
 ### Options Don't Save
-
-If configuration changes aren't persisted:
 
 1. Check for validation errors in the UI
 2. Ensure values are within allowed ranges
