@@ -14,6 +14,20 @@ if TYPE_CHECKING:
     from .coordinator import VacuumSchedulerCoordinator
 
 
+def _parse_time_value(value: Any, default: str) -> time:
+    """Parse a time value into a ``time`` object.
+
+    Accepts ``time`` objects and strings in ``HH:MM`` or ``HH:MM:SS`` format
+    (the time selector stores the latter), falling back to ``default`` when
+    the value is missing.
+    """
+    if isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        return time.fromisoformat(value)
+    return time.fromisoformat(default)
+
+
 @dataclass
 class RoomConfig:
     """Per-room configuration from a subentry."""
@@ -34,21 +48,8 @@ class RoomConfig:
     @classmethod
     def from_subentry_data(cls, subentry_id: str, data: dict[str, Any]) -> RoomConfig:
         """Create RoomConfig from subentry data dict."""
-        # Parse time strings (HH:MM format) into time objects
-        start_time_str = data.get("time_window_start", "08:00")
-        end_time_str = data.get("time_window_end", "20:00")
-
-        if isinstance(start_time_str, str):
-            hour, minute = map(int, start_time_str.split(":"))
-            start_time = time(hour, minute)
-        else:
-            start_time = start_time_str
-
-        if isinstance(end_time_str, str):
-            hour, minute = map(int, end_time_str.split(":"))
-            end_time = time(hour, minute)
-        else:
-            end_time = end_time_str
+        start_time = _parse_time_value(data.get("time_window_start"), "08:00")
+        end_time = _parse_time_value(data.get("time_window_end"), "20:00")
 
         return cls(
             subentry_id=subentry_id,
