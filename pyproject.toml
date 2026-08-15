@@ -272,11 +272,18 @@ split-on-trailing-comma = false
     "T20",    # print() allowed in scripts
     "INP001", # Implicit namespace package (scripts are not a package)
 ]
+# The integration suite shares helpers across test modules (conftest/fake_vacuum),
+# which requires importing from the tests package.
+"tests/integration/*" = [
+    "TID251",  # importing sibling test modules
+]
 "tests/*" = [
     "S101",    # assert is fine in tests
     "PLR2004", # Magic values are fine in tests
     "D",       # Docstrings not required in tests
     "PTH",     # Use pathlib - temporary exemption for tests
+    "SLF001",  # Private member access is fine in tests
+    "PLR0917", # Many positional arguments in test calls are fine
 ]
 
 [tool.ruff.lint.mccabe]

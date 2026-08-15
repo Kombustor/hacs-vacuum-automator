@@ -1,125 +1,165 @@
-"""
-Core DataUpdateCoordinator implementation for vacuum_scheduler.
+"""Core DataUpdateCoordinator for vacuum_scheduler.
 
-This module contains the main coordinator class that manages data fetching
-and updates for all entities in the integration. It handles refresh cycles,
-error handling, and triggers reauthentication when needed.
-
-For more information on coordinators:
-https://developers.home-assistant.io/docs/integration_fetching_data#coordinated-single-api-poll-for-data-for-all-entities
+Evaluates room overdue status every 60 seconds and distributes
+updates to all entities. Does not fetch from an external API.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
-from custom_components.vacuum_scheduler.api import (
-    VacuumSchedulerApiClientAuthenticationError,
-    VacuumSchedulerApiClientError,
-)
-from custom_components.vacuum_scheduler.const import LOGGER
-from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from custom_components.vacuum_scheduler.const import DOMAIN, EVENT_CRITICAL_OVERDUE, LOGGER, UPDATE_INTERVAL
+from custom_components.vacuum_scheduler.data import RoomConfig, RoomState, VacuumSchedulerConfigEntry
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
-    from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
+    from homeassistant.core import HomeAssistant
 
 
-class VacuumSchedulerDataUpdateCoordinator(DataUpdateCoordinator):
-    """
-    Class to manage fetching data from the API.
+# ── Shared scheduling helpers ────────────────────────────────────────────────
+# Also imported by service_actions/evaluate_batch.py to avoid duplicating
+# the overdue and time-window checks.
 
-    This coordinator handles all data fetching for the integration and distributes
-    updates to all entities. It manages:
-    - Periodic data updates based on update_interval
-    - Error handling and recovery
-    - Authentication failure detection and reauthentication triggers
-    - Data distribution to all entities
-    - Context-based data fetching (only fetch data for active entities)
 
-    For more information:
-    https://developers.home-assistant.io/docs/integration_fetching_data#coordinated-single-api-poll-for-data-for-all-entities
+def is_overdue(last_cleaned: datetime | None, frequency_days: int, now: datetime) -> bool:
+    """Return True if cleaning is overdue (or never cleaned)."""
+    if last_cleaned is None:
+        return True
+    # Normalise timezone awareness so comparisons are safe
+    if last_cleaned.tzinfo is not None and now.tzinfo is None:
+        last_cleaned = last_cleaned.replace(tzinfo=None)
+    elif now.tzinfo is not None and last_cleaned.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return now >= last_cleaned + timedelta(days=frequency_days)
 
-    Attributes:
-        config_entry: The config entry for this integration instance.
+
+def is_within_time_window(start: time, end: time, now: datetime) -> bool:
+    """Return True if now is within [start, end] (handles overnight windows)."""
+    t = now.time()
+    if start <= end:
+        return start <= t <= end
+    return t >= start or t <= end
+
+
+def _urgency(last_cleaned: datetime | None, frequency_days: int, now: datetime) -> float:
+    """Days past the frequency threshold (inf if never cleaned, 0 if not overdue)."""
+    if last_cleaned is None:
+        return float("inf")
+    if last_cleaned.tzinfo is not None and now.tzinfo is None:
+        last_cleaned = last_cleaned.replace(tzinfo=None)
+    elif now.tzinfo is not None and last_cleaned.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    threshold = last_cleaned + timedelta(days=frequency_days)
+    if now < threshold:
+        return 0.0
+    return (now - threshold).total_seconds() / 86400.0
+
+
+# ── Coordinator ──────────────────────────────────────────────────────────────
+
+
+class VacuumSchedulerCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
+    """Evaluates room overdue status and fires critical-overdue events.
+
+    Runs every UPDATE_INTERVAL (60 s). The data dict (keyed by subentry_id)
+    feeds the binary_sensor and switch entities.
     """
 
     config_entry: VacuumSchedulerConfigEntry
 
+    def __init__(self, hass: HomeAssistant, config_entry: VacuumSchedulerConfigEntry) -> None:
+        """Initialize the coordinator with a 60-second update interval."""
+        super().__init__(
+            hass,
+            LOGGER,
+            name=DOMAIN,
+            update_interval=UPDATE_INTERVAL,
+            config_entry=config_entry,
+            always_update=True,
+        )
+
     async def _async_setup(self) -> None:
-        """
-        Set up the coordinator.
-
-        This method is called automatically during async_config_entry_first_refresh()
-        and is the ideal place for one-time initialization tasks such as:
-        - Loading device information
-        - Setting up event listeners
-        - Initializing caches
-
-        This runs before the first data fetch, ensuring any required setup
-        is complete before entities start requesting data.
-        """
-        # Example: Fetch device info once at startup
-        # device_info = await self.config_entry.runtime_data.client.get_device_info()
-        # self._device_id = device_info["id"]
         LOGGER.debug("Coordinator setup complete for %s", self.config_entry.entry_id)
 
-    async def _async_update_data(self) -> Any:
-        """
-        Fetch data from API endpoint.
+    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+        now = dt_util.now()
+        runtime_data = self.config_entry.runtime_data
+        result: dict[str, dict[str, Any]] = {}
 
-        This is the only method that should be implemented in a DataUpdateCoordinator.
-        It is called automatically based on the update_interval.
+        for subentry_id, config in runtime_data.rooms.items():
+            state = runtime_data.room_states.get(subentry_id)
+            if state is None:
+                LOGGER.warning("Missing state for room subentry %s, skipping", subentry_id)
+                continue
 
-        Context-based fetching:
-        The coordinator tracks which entities are currently listening via async_contexts().
-        This allows optimizing API calls to only fetch data that's actually needed.
-        For example, if only sensor entities are enabled, we can skip fetching switch data.
+            vacuum_overdue = is_overdue(state.last_vacuumed, config.vacuum_frequency_days, now)
+            mop_overdue = bool(
+                config.mop_frequency_days is not None and is_overdue(state.last_mopped, config.mop_frequency_days, now)
+            )
+            # Mopping implies vacuuming
+            if mop_overdue:
+                vacuum_overdue = True
 
-        The API client uses the credentials from config_entry to authenticate:
-        - username: from config_entry.data["username"]
-        - password: from config_entry.data["password"]
+            overdue_details: dict[str, bool] = {"vacuum": vacuum_overdue}
+            if config.mop_frequency_days is not None:
+                overdue_details["mop"] = mop_overdue
 
-        Expected API response structure (example):
-        {
-            "userId": 1,      # Used as device identifier
-            "id": 1,          # Data record ID
-            "title": "...",   # Additional metadata
-            "body": "...",    # Additional content
-            # In production, would include:
-            # "air_quality": {"aqi": 45, "pm25": 12.3},
-            # "filter": {"life_remaining": 75, "runtime_hours": 324},
-            # "settings": {"fan_speed": "medium", "humidity": 55}
-        }
+            if state.enabled:
+                self._maybe_fire_critical_event(subentry_id, config, state, now)
 
-        Returns:
-            The data from the API as a dictionary.
+            result[subentry_id] = {
+                "room_name": config.room_name,
+                "is_overdue": any(overdue_details.values()),
+                "overdue_details": overdue_details,
+                "last_vacuumed": state.last_vacuumed,
+                "last_mopped": state.last_mopped,
+                "days_since_vacuum": (now - state.last_vacuumed).days if state.last_vacuumed else None,
+                "days_since_mop": (now - state.last_mopped).days if state.last_mopped else None,
+                "enabled": state.enabled,
+            }
 
-        Raises:
-            ConfigEntryAuthFailed: If authentication fails, triggers reauthentication.
-            UpdateFailed: If data fetching fails for other reasons, optionally with retry_after.
-        """
-        try:
-            # Optional: Get active entity contexts to optimize data fetching
-            # listening_contexts = set(self.async_contexts())
-            # LOGGER.debug("Active entity contexts: %s", listening_contexts)
+        return result
 
-            # Fetch data from API
-            # In production, you could pass listening_contexts to optimize the API call:
-            # return await self.config_entry.runtime_data.client.async_get_data(listening_contexts)
-            return await self.config_entry.runtime_data.client.async_get_data()
-        except VacuumSchedulerApiClientAuthenticationError as exception:
-            LOGGER.warning("Authentication error - %s", exception)
-            raise ConfigEntryAuthFailed(
-                translation_domain="vacuum_scheduler",
-                translation_key="authentication_failed",
-            ) from exception
-        except VacuumSchedulerApiClientError as exception:
-            LOGGER.exception("Error communicating with API")
-            # If the API provides rate limit information, you can honor it:
-            # if hasattr(exception, 'retry_after'):
-            #     raise UpdateFailed(retry_after=exception.retry_after) from exception
-            raise UpdateFailed(
-                translation_domain="vacuum_scheduler",
-                translation_key="update_failed",
-            ) from exception
+    # ── critical-overdue events ──────────────────────────────────────────
+
+    def _maybe_fire_critical_event(
+        self,
+        subentry_id: str,
+        config: RoomConfig,
+        state: RoomState,
+        now: datetime,
+    ) -> None:
+        """Fire vac_scheduler_critical_overdue once per critical-overdue period."""
+        runtime_data = self.config_entry.runtime_data
+        critical_days = runtime_data.global_config.critical_overdue_days
+        fired: set[str] = runtime_data._fired_critical_events.get(subentry_id, set())  # noqa: SLF001
+
+        def _check(mode: str, last_cleaned: datetime | None, freq_days: int) -> None:
+            if last_cleaned is None:
+                is_critical = True
+            else:
+                threshold = last_cleaned + timedelta(days=freq_days + critical_days)
+                is_critical = now >= threshold
+            if is_critical and mode not in fired:
+                fired.add(mode)
+                self.hass.bus.async_fire(
+                    EVENT_CRITICAL_OVERDUE,
+                    {
+                        "room_name": config.room_name,
+                        "mode": mode,
+                        "entry_id": self.config_entry.entry_id,
+                    },
+                )
+            elif not is_critical:
+                fired.discard(mode)
+
+        _check("vacuum", state.last_vacuumed, config.vacuum_frequency_days)
+        if config.mop_frequency_days is not None:
+            _check("mop", state.last_mopped, config.mop_frequency_days)
+
+        if fired:
+            runtime_data._fired_critical_events[subentry_id] = fired  # noqa: SLF001
+        else:
+            runtime_data._fired_critical_events.pop(subentry_id, None)  # noqa: SLF001

@@ -198,7 +198,8 @@ if [[ -n "${HA_VERSION:-}" ]]; then
 else
     # Read from hacs.json: treat YEAR.MONTH.0 as YEAR.MONTH so the latest
     # stable patch is installed (hacs.json records minimum version, not pin)
-    HA_VERSION=$(grep '"homeassistant"' hacs.json | head -1 | sed 's/.*"homeassistant"\s*:\s*"\([^"]*\)".*/\1/')
+    # `\s` is a GNU sed extension; BSD sed (macOS) needs [[:space:]].
+    HA_VERSION=$(grep '"homeassistant"' hacs.json | head -1 | sed 's/.*"homeassistant"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     if [[ -z "$HA_VERSION" ]]; then
         log_error "HA_VERSION not set and could not be determined from hacs.json"
         exit 1
@@ -234,6 +235,15 @@ mkdir -p "/tmp/homeassistant"
 _download "${HA_CORE_BASE_URL}/homeassistant/package_constraints.txt" "/tmp/homeassistant/package_constraints.txt" # constraints for requirements files
 _download "${HA_CORE_BASE_URL}/requirements.txt" "/tmp/requirements.txt"                                           # required by requirements_all.txt
 _download "${HA_CORE_BASE_URL}/requirements_all.txt" "/tmp/requirements_all.txt"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    # pyitachip2ir (itach IR integration, unrelated to this project) fails to
+    # compile on macOS arm64 with modern clang ("invalid operands to binary
+    # expression" in its C++ source; package is unmaintained, no wheels).
+    # Linux/CI is unaffected — the line is only removed on macOS.
+    sed -i '' '/^pyitachip2ir/d' /tmp/requirements_all.txt
+fi
+
 uv pip install --requirement "/tmp/requirements_all.txt"
 
 log_header "Installing Home Assistant ${HA_VERSION} test dependencies"

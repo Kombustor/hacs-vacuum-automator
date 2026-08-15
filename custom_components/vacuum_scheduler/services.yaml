@@ -1,30 +1,48 @@
 # yaml-language-server: $schema=../../schemas/yaml/services_schema.yaml
-# Describes the format for available services for vacuum_scheduler
-
-example_action:
-  name: Example Action
-  description: Execute an example action (dummy service for demonstration)
+evaluate_batch:
+  name: Evaluate Batch
+  description: Evaluate all rooms and trigger cleaning for overdue rooms with open doors.
   fields:
-    action_type:
-      name: Action Type
-      description: The type of action to perform
-      required: false
-      default: default
-      example: "update"
+    vacuum_entity:
+      name: Vacuum Entity
+      description: Optional vacuum entity ID to filter rooms by.
+      selector:
+        entity:
+          domain: vacuum
+      example: vacuum.roborock
+    dry_run:
+      name: Dry Run
+      description: If true, only return the list of rooms without triggering cleaning.
+      selector:
+        boolean:
+      default: false
+      example: true
+
+record_cleaning:
+  name: Record Cleaning
+  description: Manually record that a room has been cleaned.
+  fields:
+    room_name:
+      name: Room Name
+      description: The name of the room that was cleaned.
+      required: true
+      selector:
+        text:
+      example: Kitchen
+    mode:
+      name: Cleaning Mode
+      description: The type of cleaning performed.
+      required: true
       selector:
         select:
           options:
-            - "default"
-            - "update"
-            - "reset"
-    target_value:
-      name: Target Value
-      description: The target value for the action
-      required: false
-      example: "new_value"
+            - vacuum
+            - mop
+            - vacuum_and_mop
+      example: vacuum
+    timestamp:
+      name: Timestamp
+      description: Optional ISO format timestamp. Defaults to now.
       selector:
         text:
-
-reload_data:
-  name: Reload Data
-  description: Force a refresh of the integration data from the API
+      example: "2026-06-10T09:30:00"

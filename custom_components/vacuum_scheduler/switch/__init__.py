@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from custom_components.vacuum_scheduler.const import PARALLEL_UPDATES as PARALLEL_UPDATES
-from homeassistant.components.switch import SwitchEntityDescription
-
-from .example_switch import ENTITY_DESCRIPTIONS as SWITCH_DESCRIPTIONS, VacuumSchedulerSwitch
-
-if TYPE_CHECKING:
-    from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
-    from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-# Combine all entity descriptions from different modules
-ENTITY_DESCRIPTIONS: tuple[SwitchEntityDescription, ...] = (*SWITCH_DESCRIPTIONS,)
+from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
+from custom_components.vacuum_scheduler.switch.enabled import VacuumSchedulerEnabledSwitch
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 
 async def async_setup_entry(
@@ -23,11 +14,32 @@ async def async_setup_entry(
     entry: VacuumSchedulerConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the switch platform."""
-    async_add_entities(
-        VacuumSchedulerSwitch(
-            coordinator=entry.runtime_data.coordinator,
-            entity_description=entity_description,
+    """Set up switch platform.
+
+    Creates one enabled switch per room (subentry).
+
+    Args:
+        hass: The Home Assistant instance.
+        entry: The config entry.
+        async_add_entities: Callback to add entities.
+
+    """
+    runtime_data = entry.runtime_data
+    coordinator = runtime_data.coordinator
+
+    entities: list[SwitchEntity] = []
+
+    for subentry_id, room_config in runtime_data.rooms.items():
+        room_state = runtime_data.room_states[subentry_id]
+
+        # Create enabled switch for this room
+        entities.append(
+            VacuumSchedulerEnabledSwitch(
+                coordinator=coordinator,
+                room_config=room_config,
+                room_state=room_state,
+                entry_id=entry.entry_id,
+            )
         )
-        for entity_description in SWITCH_DESCRIPTIONS
-    )
+
+    async_add_entities(entities)

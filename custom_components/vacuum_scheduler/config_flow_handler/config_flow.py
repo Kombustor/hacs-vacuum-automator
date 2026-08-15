@@ -1,245 +1,319 @@
-"""
-Config flow for vacuum_scheduler.
+"""Config flow for vacuum_scheduler.
 
-This module implements the main configuration flow including:
-- Initial user setup
-- Reconfiguration of existing entries
-- Reauthentication flow
-
-For more information:
-https://developers.home-assistant.io/docs/config_entries_config_flow_handler
+This module implements the main configuration flow for the hub entry.
+Room configuration is handled via subentries in room_subentry_flow.py.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from slugify import slugify
+import voluptuous as vol
 
-from custom_components.vacuum_scheduler.config_flow_handler.schemas import (
-    get_reauth_schema,
-    get_reconfigure_schema,
-    get_user_schema,
+from custom_components.vacuum_scheduler.config_flow_handler.room_subentry_flow import RoomSubentryFlow
+from custom_components.vacuum_scheduler.const import (
+    CONF_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+    CONF_CRITICAL_OVERDUE_DAYS,
+    CONF_DEFAULT_FAN_SPEED,
+    CONF_DEFAULT_MOP_INTENSITY,
+    CONF_GLOBAL_DRY_RUN,
+    CONF_MAX_ROOMS_PER_BATCH,
+    CONF_NOTIFY_ENTITY,
+    CONF_STABILIZATION_PERIOD,
+    DEFAULT_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+    DEFAULT_CRITICAL_OVERDUE_DAYS,
+    DEFAULT_MAX_ROOMS_PER_BATCH,
+    DEFAULT_STABILIZATION_PERIOD,
+    DOMAIN,
+    MOP_INTENSITY_OPTIONS,
 )
-from custom_components.vacuum_scheduler.config_flow_handler.validators import validate_credentials
-from custom_components.vacuum_scheduler.const import DOMAIN, LOGGER
 from homeassistant import config_entries
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.loader import async_get_loaded_integration
-
-if TYPE_CHECKING:
-    from custom_components.vacuum_scheduler.config_flow_handler.options_flow import VacuumSchedulerOptionsFlow
-
-# Map exception types to error keys for user-facing messages
-ERROR_MAP = {
-    "VacuumSchedulerApiClientAuthenticationError": "auth",
-    "VacuumSchedulerApiClientCommunicationError": "connection",
-}
+from homeassistant.config_entries import ConfigSubentryFlow
+from homeassistant.const import CONF_NAME
+from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 
 class VacuumSchedulerConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
-    """
-    Handle a config flow for vacuum_scheduler.
+    """Handle the initial configuration flow for vacuum_scheduler.
 
-    This class manages the configuration flow for the integration, including
-    initial setup, reconfiguration, and reauthentication.
-
-    Supported flows:
-    - user: Initial setup via UI
-    - reconfigure: Update existing configuration
-    - reauth: Handle expired credentials
-
-    For more details:
-    https://developers.home-assistant.io/docs/config_entries_config_flow_handler
+    Room configuration is managed through subentries (see RoomSubentryFlow).
     """
 
     VERSION = 1
 
     @staticmethod
+    @callback
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> VacuumSchedulerOptionsFlow:
-        """
-        Get the options flow for this handler.
+    ) -> config_entries.OptionsFlow:
+        """Return the options flow handler."""
+        return VacuumSchedulerOptionsFlowHandler(config_entry)
+
+    @staticmethod
+    @callback
+    def async_get_supported_subentry_types(
+        config_entry: config_entries.ConfigEntry,
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentry types supported by this integration.
+
+        Args:
+            config_entry: The config entry being configured.
 
         Returns:
-            The options flow instance for modifying integration options.
+            Mapping of subentry type to flow handler class.
 
         """
-        from custom_components.vacuum_scheduler.config_flow_handler.options_flow import (  # noqa: PLC0415
-            VacuumSchedulerOptionsFlow,
-        )
-
-        return VacuumSchedulerOptionsFlow()
+        return {
+            "room": RoomSubentryFlow,
+        }
 
     async def async_step_user(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """
-        Handle a flow initialized by the user.
+        """Handle the initial user configuration step.
 
-        This is the entry point when a user adds the integration from the UI.
+        This creates the hub config entry. Users will add rooms via
+        subentries after setup.
 
         Args:
-            user_input: The user input from the config flow form, or None for initial display.
+            user_input: The user input from the form, or None for initial display.
 
         Returns:
-            The config flow result, either showing a form or creating an entry.
-
+            The config flow result.
         """
-        errors: dict[str, str] = {}
-
         if user_input is not None:
-            try:
-                await validate_credentials(
-                    self.hass,
-                    username=user_input[CONF_USERNAME],
-                    password=user_input[CONF_PASSWORD],
-                )
-            except Exception as exception:  # noqa: BLE001
-                errors["base"] = self._map_exception_to_error(exception)
-            else:
-                # Set unique ID based on username
-                # NOTE: This is just an example - use a proper unique ID in production
-                # See: https://developers.home-assistant.io/docs/config_entries_config_flow_handler#unique-ids
-                await self.async_set_unique_id(slugify(user_input[CONF_USERNAME]))
-                self._abort_if_unique_id_configured()
+            # Store hub name and proceed to global config
+            self._hub_name = user_input[CONF_NAME]
+            await self.async_set_unique_id(self._hub_name.lower().strip())
+            self._abort_if_unique_id_configured()
+            return await self.async_step_global_config()
 
-                return self.async_create_entry(
-                    title=user_input[CONF_USERNAME],
-                    data=user_input,
-                )
-
-        integration = async_get_loaded_integration(self.hass, DOMAIN)
-        assert integration.documentation is not None, "Integration documentation URL is not set in manifest.json"
+        # Show form to collect hub name
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_NAME, default="Vacuum Scheduler"): str,
+            },
+        )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=get_user_schema(user_input),
-            errors=errors,
-            description_placeholders={
-                "documentation_url": integration.documentation,
+            data_schema=schema,
+        )
+
+    async def async_step_global_config(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle global configuration step.
+
+        Args:
+            user_input: The user input from the form, or None for initial display.
+
+        Returns:
+            The config flow result.
+
+        """
+        if user_input is not None:
+            # Create the hub entry with global config
+            return self.async_create_entry(
+                title=self._hub_name,
+                data=user_input,
+            )
+
+        # Show form for global configuration
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_NOTIFY_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="notify"),
+                ),
+                vol.Optional(
+                    CONF_GLOBAL_DRY_RUN,
+                    default=False,
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_MAX_ROOMS_PER_BATCH,
+                    default=DEFAULT_MAX_ROOMS_PER_BATCH,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=20,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Optional(
+                    CONF_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+                    default=DEFAULT_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_CRITICAL_OVERDUE_DAYS,
+                    default=DEFAULT_CRITICAL_OVERDUE_DAYS,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=7,
+                        step=1,
+                        unit_of_measurement="days",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Optional(CONF_DEFAULT_FAN_SPEED): str,
+                vol.Optional(
+                    CONF_DEFAULT_MOP_INTENSITY,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=MOP_INTENSITY_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    ),
+                ),
             },
+        )
+
+        return self.async_show_form(
+            step_id="global_config",
+            data_schema=schema,
         )
 
     async def async_step_reconfigure(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """
-        Handle reconfiguration of the integration.
-
-        Allows users to update their credentials without removing and re-adding
-        the integration.
+        """Handle reconfiguration of the hub entry.
 
         Args:
-            user_input: The user input from the reconfigure form, or None for initial display.
+            user_input: The user input from the form, or None for initial display.
 
         Returns:
-            The config flow result, either showing a form or updating the entry.
+            The config flow result.
 
         """
         entry = self._get_reconfigure_entry()
-        errors: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                await validate_credentials(
-                    self.hass,
-                    username=user_input[CONF_USERNAME],
-                    password=user_input[CONF_PASSWORD],
-                )
-            except Exception as exception:  # noqa: BLE001
-                errors["base"] = self._map_exception_to_error(exception)
-            else:
-                return self.async_update_reload_and_abort(
-                    entry,
-                    data=user_input,
-                )
+            return self.async_update_reload_and_abort(
+                entry,
+                title=entry.title,
+                data=user_input,
+                reason="reconfigure_successful",
+            )
 
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=get_reconfigure_schema(entry.data.get(CONF_USERNAME, "")),
-            errors=errors,
-        )
-
-    async def async_step_reauth(
-        self,
-        entry_data: dict[str, Any] | None = None,
-    ) -> config_entries.ConfigFlowResult:
-        """
-        Handle reauthentication when credentials are invalid.
-
-        This flow is automatically triggered when the coordinator catches
-        an authentication error (ConfigEntryAuthFailed).
-
-        Args:
-            entry_data: The existing entry data (unused, per convention).
-
-        Returns:
-            The result of the reauth_confirm step.
-
-        """
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ) -> config_entries.ConfigFlowResult:
-        """
-        Handle reauthentication confirmation.
-
-        Shows the reauthentication form and processes updated credentials.
-
-        Args:
-            user_input: The user input with updated credentials, or None for initial display.
-
-        Returns:
-            The config flow result, either showing a form or updating the entry.
-
-        """
-        entry = self._get_reauth_entry()
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            try:
-                await validate_credentials(
-                    self.hass,
-                    username=user_input[CONF_USERNAME],
-                    password=user_input[CONF_PASSWORD],
-                )
-            except Exception as exception:  # noqa: BLE001
-                errors["base"] = self._map_exception_to_error(exception)
-            else:
-                return self.async_update_reload_and_abort(
-                    entry,
-                    data={**entry.data, **user_input},
-                )
-
-        return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=get_reauth_schema(entry.data.get(CONF_USERNAME, "")),
-            errors=errors,
-            description_placeholders={
-                "username": entry.data.get(CONF_USERNAME, ""),
+        # Build schema with current values as defaults
+        current_data = entry.data
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_NOTIFY_ENTITY,
+                    default=current_data.get(CONF_NOTIFY_ENTITY),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="notify"),
+                ),
+                vol.Optional(
+                    CONF_GLOBAL_DRY_RUN,
+                    default=current_data.get(CONF_GLOBAL_DRY_RUN, False),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_MAX_ROOMS_PER_BATCH,
+                    default=current_data.get(CONF_MAX_ROOMS_PER_BATCH, DEFAULT_MAX_ROOMS_PER_BATCH),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=20,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Optional(
+                    CONF_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+                    default=current_data.get(
+                        CONF_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+                        DEFAULT_ALLOW_CLEANING_WHEN_WINDOW_OPEN,
+                    ),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_CRITICAL_OVERDUE_DAYS,
+                    default=current_data.get(CONF_CRITICAL_OVERDUE_DAYS, DEFAULT_CRITICAL_OVERDUE_DAYS),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=7,
+                        step=1,
+                        unit_of_measurement="days",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Optional(
+                    CONF_DEFAULT_FAN_SPEED,
+                    default=current_data.get(CONF_DEFAULT_FAN_SPEED),
+                ): str,
+                vol.Optional(
+                    CONF_DEFAULT_MOP_INTENSITY,
+                    default=current_data.get(CONF_DEFAULT_MOP_INTENSITY),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=MOP_INTENSITY_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    ),
+                ),
             },
         )
 
-    def _map_exception_to_error(self, exception: Exception) -> str:
-        """
-        Map API exceptions to user-facing error keys.
-
-        Args:
-            exception: The exception that was raised.
-
-        Returns:
-            The error key for display in the config flow form.
-
-        """
-        LOGGER.warning("Error in config flow: %s", exception)
-        exception_name = type(exception).__name__
-        return ERROR_MAP.get(exception_name, "unknown")
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+        )
 
 
-__all__ = ["VacuumSchedulerConfigFlowHandler"]
+class VacuumSchedulerOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for vacuum_scheduler."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        super().__init__()
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return config entry."""
+        return self._config_entry
+
+    async def async_step_init(
+        self,
+        user_input: dict[str, Any] | None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle the initial options step."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_options = self.config_entry.options
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_STABILIZATION_PERIOD,
+                    default=current_options.get(
+                        CONF_STABILIZATION_PERIOD,
+                        DEFAULT_STABILIZATION_PERIOD,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=30,
+                        step=1,
+                        unit_of_measurement="min",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+            },
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,
+        )
+
+
+__all__ = [
+    "VacuumSchedulerConfigFlowHandler",
+    "VacuumSchedulerOptionsFlowHandler",
+]

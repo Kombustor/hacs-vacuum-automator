@@ -83,7 +83,9 @@ echo ""
 
 run_hook "test" "pre"
 echo ""
-pytest "${COVERAGE_ARGS[@]}" "${PYTEST_ARGS[@]}"
+# ${arr[@]+...} keeps bash 3.2 (macOS default) from treating an empty array
+# as unbound under `set -u`.
+pytest "${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"}" "${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}"
 
 run_hook "test" "post"
 

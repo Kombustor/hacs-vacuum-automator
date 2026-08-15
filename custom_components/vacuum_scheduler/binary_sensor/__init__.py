@@ -2,24 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from custom_components.vacuum_scheduler.const import PARALLEL_UPDATES as PARALLEL_UPDATES
-from homeassistant.components.binary_sensor import BinarySensorEntityDescription
-
-from .connectivity import ENTITY_DESCRIPTIONS as CONNECTIVITY_DESCRIPTIONS, VacuumSchedulerConnectivitySensor
-from .filter import ENTITY_DESCRIPTIONS as FILTER_DESCRIPTIONS, VacuumSchedulerFilterSensor
-
-if TYPE_CHECKING:
-    from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
-    from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-# Combine all entity descriptions from different modules
-ENTITY_DESCRIPTIONS: tuple[BinarySensorEntityDescription, ...] = (
-    *CONNECTIVITY_DESCRIPTIONS,
-    *FILTER_DESCRIPTIONS,
-)
+from custom_components.vacuum_scheduler.binary_sensor.overdue import VacuumSchedulerOverdueSensor
+from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
+from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 
 async def async_setup_entry(
@@ -27,24 +14,32 @@ async def async_setup_entry(
     entry: VacuumSchedulerConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the binary_sensor platform."""
-    # Create connectivity sensors
-    connectivity_entities = [
-        VacuumSchedulerConnectivitySensor(
-            coordinator=entry.runtime_data.coordinator,
-            entity_description=entity_description,
-        )
-        for entity_description in CONNECTIVITY_DESCRIPTIONS
-    ]
+    """Set up binary_sensor platform.
 
-    # Create filter sensors
-    filter_entities = [
-        VacuumSchedulerFilterSensor(
-            coordinator=entry.runtime_data.coordinator,
-            entity_description=entity_description,
-        )
-        for entity_description in FILTER_DESCRIPTIONS
-    ]
+    Creates one overdue sensor per room (subentry).
 
-    # Add all entities
-    async_add_entities([*connectivity_entities, *filter_entities])
+    Args:
+        hass: The Home Assistant instance.
+        entry: The config entry.
+        async_add_entities: Callback to add entities.
+
+    """
+    runtime_data = entry.runtime_data
+    coordinator = runtime_data.coordinator
+
+    entities: list[BinarySensorEntity] = []
+
+    for subentry_id, room_config in runtime_data.rooms.items():
+        room_state = runtime_data.room_states[subentry_id]
+
+        # Create overdue sensor for this room
+        entities.append(
+            VacuumSchedulerOverdueSensor(
+                coordinator=coordinator,
+                room_config=room_config,
+                room_state=room_state,
+                entry_id=entry.entry_id,
+            )
+        )
+
+    async_add_entities(entities)

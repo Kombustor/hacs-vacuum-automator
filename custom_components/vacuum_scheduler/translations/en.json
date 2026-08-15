@@ -2,151 +2,174 @@
   "config": {
     "step": {
       "user": {
-        "description": "If you need help with the configuration have a look at the [documentation]({documentation_url}).",
+        "title": "Vacuum Scheduler",
+        "description": "Set up the Vacuum Scheduler hub. You will add rooms as subentries after setup.",
         "data": {
-          "username": "Username",
-          "password": "Password"
+          "name": "Hub Name"
+        }
+      },
+      "global_config": {
+        "title": "Global Configuration",
+        "description": "Configure global settings for the vacuum scheduler.",
+        "data": {
+          "notify_entity": "Notify Entity",
+          "global_dry_run": "Global Dry Run Mode",
+          "max_rooms_per_batch": "Max Rooms Per Batch",
+          "allow_cleaning_when_window_open": "Allow Cleaning When Window Open",
+          "critical_overdue_days": "Critical Overdue Threshold (days)"
+        },
+        "data_description": {
+          "notify_entity": "Optional notify entity for user notifications (e.g., notify.mobile_app_phone)",
+          "global_dry_run": "When enabled, all cleaning operations are simulated without actually calling the vacuum",
+          "max_rooms_per_batch": "Maximum number of rooms to clean in a single batch (1-20)",
+          "allow_cleaning_when_window_open": "Allow cleaning even when window sensors report open",
+          "critical_overdue_days": "Days beyond frequency before a room is considered critically overdue (1-7 days)"
         }
       },
       "reconfigure": {
-        "description": "Update the credentials for this integration.",
+        "title": "Reconfigure Vacuum Scheduler",
+        "description": "Update the global configuration.",
         "data": {
-          "username": "Username",
-          "password": "Password"
-        }
-      },
-      "reauth_confirm": {
-        "title": "Reauthenticate Integration",
-        "description": "The credentials for {username} are no longer valid. Please provide updated credentials to restore access.",
-        "data": {
-          "username": "Username",
-          "password": "Password"
+          "notify_entity": "Notify Entity",
+          "global_dry_run": "Global Dry Run Mode",
+          "max_rooms_per_batch": "Max Rooms Per Batch",
+          "allow_cleaning_when_window_open": "Allow Cleaning When Window Open",
+          "critical_overdue_days": "Critical Overdue Threshold (days)"
         }
       }
-    },
-    "error": {
-      "auth": "Username/Password is wrong.",
-      "connection": "Unable to connect to the server.",
-      "unknown": "Unknown error occurred."
-    },
-    "abort": {
-      "already_configured": "This entry is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Configure Integration Options",
-        "description": "Customize how this integration operates.",
+        "title": "Configure Vacuum Scheduler Options",
+        "description": "Customize how the scheduler operates.",
         "data": {
-          "update_interval_hours": "Update interval (hours)",
-          "enable_debugging": "Enable debug logging",
-          "custom_icon": "Custom icon (optional)"
+          "stabilization_period": "Door Stabilization Period (minutes)"
         },
         "data_description": {
-          "update_interval_hours": "How often to refresh data from the API (0.25 to 24 hours)",
-          "enable_debugging": "Enable detailed debug logging for troubleshooting",
-          "custom_icon": "Override the default icon for entities (optional)"
+          "stabilization_period": "Minimum time a door must be open before auto-triggering cleaning (0-30 minutes, 0 = immediate)"
         }
       }
     }
   },
-  "exceptions": {
-    "authentication_failed": {
-      "message": "Authentication failed during data update."
-    },
-    "update_failed": {
-      "message": "Failed to update data from the server."
-    },
-    "switch_turn_on_failed": {
-      "message": "Failed to turn on the switch."
-    },
-    "switch_turn_off_failed": {
-      "message": "Failed to turn off the switch."
-    },
-    "number_set_failed": {
-      "message": "Failed to set the target value."
+  "subentry": {
+    "room": {
+      "step": {
+        "user": {
+          "title": "Add Room",
+          "description": "Configure a room for automated vacuum scheduling.",
+          "data": {
+            "room_name": "Room Name",
+            "vacuum_entity": "Vacuum Entity",
+            "door_sensor": "Door Sensor (optional)",
+            "window_sensor": "Window Sensor (optional)",
+            "cleaning_area_id": "Cleaning Area",
+            "vacuum_frequency_days": "Vacuum Frequency (days)",
+            "mop_frequency_days": "Mop Frequency (days, 0 = disabled)",
+            "fan_speed": "Fan Speed (optional)",
+            "mop_intensity": "Mop Intensity (optional)",
+            "time_window_start": "Time Window Start",
+            "time_window_end": "Time Window End"
+          },
+          "data_description": {
+            "room_name": "A unique name for this room (e.g., 'Kitchen')",
+            "vacuum_entity": "The vacuum entity to use for this room",
+            "door_sensor": "Binary sensor that indicates when the room door is open",
+            "window_sensor": "Binary sensor that indicates when a window is open",
+            "cleaning_area_id": "Home Assistant area(s) to clean",
+            "vacuum_frequency_days": "How often to vacuum this room (1-30 days)",
+            "mop_frequency_days": "How often to mop this room. Set to 0 to disable mopping. Mopping always includes vacuuming.",
+            "fan_speed": "Fan speed preset from your vacuum's supported speeds (e.g., quiet, balanced, turbo)",
+            "mop_intensity": "Mop water flow intensity",
+            "time_window_start": "Start of the time window when cleaning is allowed",
+            "time_window_end": "End of the time window when cleaning is allowed"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit Room",
+          "description": "Update the room configuration.",
+          "data": {
+            "room_name": "Room Name",
+            "vacuum_entity": "Vacuum Entity",
+            "door_sensor": "Door Sensor (optional)",
+            "window_sensor": "Window Sensor (optional)",
+            "cleaning_area_id": "Cleaning Area",
+            "vacuum_frequency_days": "Vacuum Frequency (days)",
+            "mop_frequency_days": "Mop Frequency (days, 0 = disabled)",
+            "fan_speed": "Fan Speed (optional)",
+            "mop_intensity": "Mop Intensity (optional)",
+            "time_window_start": "Time Window Start",
+            "time_window_end": "Time Window End"
+          }
+        }
+      },
+      "error": {
+        "room_name_exists": "A room with this name already exists."
+      }
     }
   },
-  "entity": {
-    "sensor": {
-      "air_quality_index": {
-        "name": "Air Quality Index"
-      },
-      "pm25": {
-        "name": "PM2.5"
-      },
-      "filter_life": {
-        "name": "Filter Life Remaining"
-      },
-      "runtime": {
-        "name": "Total Runtime"
+  "selector": {
+    "mop_intensity": {
+      "options": {
+        "off": "Off",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "auto": "Auto",
+        "custom": "Custom"
+      }
+    }
+  },
+  "services": {
+    "evaluate_batch": {
+      "name": "Evaluate Batch",
+      "description": "Evaluate all rooms and trigger cleaning for overdue rooms with open doors.",
+      "fields": {
+        "vacuum_entity": {
+          "name": "Vacuum Entity",
+          "description": "Optional vacuum entity ID to filter rooms by."
+        },
+        "dry_run": {
+          "name": "Dry Run",
+          "description": "If true, only return the list of rooms without triggering cleaning."
+        }
       }
     },
+    "record_cleaning": {
+      "name": "Record Cleaning",
+      "description": "Manually record that a room has been cleaned.",
+      "fields": {
+        "room_name": {
+          "name": "Room Name",
+          "description": "The name of the room that was cleaned."
+        },
+        "mode": {
+          "name": "Cleaning Mode",
+          "description": "The type of cleaning performed."
+        },
+        "timestamp": {
+          "name": "Timestamp",
+          "description": "Optional ISO format timestamp. Defaults to now."
+        }
+      }
+    }
+  },
+  "notify": {
+    "dry_run_title": "Vacuum Scheduler - Dry Run",
+    "dry_run_message": "Would clean {count} room(s): {rooms}",
+    "cleaning_started_title": "Vacuum Scheduler - Cleaning Started",
+    "cleaning_started_message": "Starting cleaning for {count} room(s): {rooms}"
+  },
+  "entity": {
     "binary_sensor": {
-      "api_connectivity": {
-        "name": "API Connection"
-      },
-      "filter_replacement": {
-        "name": "Filter Replacement Needed"
+      "room_overdue": {
+        "name": "{room_name} Overdue"
       }
     },
     "switch": {
-      "child_lock": {
-        "name": "Child Lock"
-      },
-      "led_display": {
-        "name": "LED Display"
-      }
-    },
-    "select": {
-      "fan_speed": {
-        "name": "Fan Speed",
-        "state": {
-          "low": "Low",
-          "medium": "Medium",
-          "high": "High",
-          "auto": "Auto"
-        }
-      }
-    },
-    "number": {
-      "target_humidity": {
-        "name": "Target Humidity"
-      }
-    },
-    "button": {
-      "reset_filter": {
-        "name": "Reset Filter Timer"
-      }
-    },
-    "fan": {
-      "air_purifier": {
-        "name": "Air Purifier"
-      }
-    }
-  },
-  "issues": {
-    "deprecated_api_endpoint": {
-      "title": "Deprecated API Endpoint",
-      "fix_flow": {
-        "step": {
-          "init": {
-            "title": "Update API Endpoint",
-            "description": "Your device is using API version {api_version} which is deprecated. Please update to v2 for continued support and new features.\n\nClick Submit to update your device to use the new API endpoint (v2). This will reload the integration."
-          }
-        }
-      }
-    },
-    "missing_configuration": {
-      "title": "Missing Configuration",
-      "fix_flow": {
-        "step": {
-          "init": {
-            "title": "Acknowledge Configuration Issue",
-            "description": "Some configuration options are missing or invalid. Please reconfigure the integration to ensure proper operation.\n\nClick Submit to acknowledge this issue. You may need to reconfigure the integration if problems persist."
-          }
-        }
+      "room_enabled": {
+        "name": "{room_name} Enabled"
       }
     }
   }
