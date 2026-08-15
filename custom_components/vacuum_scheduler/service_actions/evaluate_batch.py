@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.vacuum_scheduler.const import LOGGER, MOP_INTENSITY_COMMAND_MAP
+from custom_components.vacuum_scheduler.const import LOGGER, MOP_INTENSITY_COMMAND_MAP, MOP_INTENSITY_OFF
 from custom_components.vacuum_scheduler.coordinator.base import _urgency, is_overdue, is_within_time_window
 from custom_components.vacuum_scheduler.data import RoomConfig, RoomState, VacuumSchedulerConfigEntry
 from custom_components.vacuum_scheduler.utils import async_save_room_states, async_send_notification, async_translate
@@ -30,7 +30,10 @@ async def async_trigger_room_cleaning(
 
     Sets mop mode and fan speed before starting the cleaning job.
     Always sets fan speed if a value is provided (global default or room override).
-    Sets mop mode only when mopping is needed.
+    Manages the water box mode whenever mopping is configured (mop_intensity
+    is not None): arms the configured intensity when mopping is needed, and
+    resets the water box to OFF for vacuum-only runs so the vacuum does not
+    inherit a previously armed mop mode.
 
     Args:
         hass: The Home Assistant instance.
@@ -41,15 +44,20 @@ async def async_trigger_room_cleaning(
         mop_intensity: Optional mop intensity preset (global default or room override).
 
     """
-    # Set mopping behavior if mopping is needed.
+    # Set mopping behavior if the vacuum is configured for mopping.
     # This is best-effort: if the vacuum does not support the send_command
     # service or the specific command, we log a warning and proceed.
-    if needs_mopping and mop_intensity:
-        mop_command_value = MOP_INTENSITY_COMMAND_MAP.get(mop_intensity)
+    if mop_intensity:
+        if needs_mopping:
+            mop_command_value = MOP_INTENSITY_COMMAND_MAP.get(mop_intensity)
+        else:
+            # Vacuum-only run: reset the water box so a previously armed mop
+            # mode does not make clean_area run vacuum+mop.
+            mop_command_value = MOP_INTENSITY_COMMAND_MAP[MOP_INTENSITY_OFF]
         if mop_command_value is not None:
             LOGGER.debug(
                 "Setting water box custom mode to %s (%d) for %s",
-                mop_intensity,
+                MOP_INTENSITY_OFF if not needs_mopping else mop_intensity,
                 mop_command_value,
                 vacuum_entity,
             )
@@ -318,6 +326,20 @@ async def async_handle_evaluate_batch(
         }
         result["rooms"].append(room_result)
 
+        # Vacuum-only group: if any room has mopping configured (room override
+        # or global default), reset the water box to OFF so the vacuum does
+        # not run vacuum+mop from a previously armed mop mode.
+        trigger_mop_intensity = mop_intensity
+        if not grp_needs_mopping:
+            trigger_mop_intensity = next(
+                (
+                    config.mop_intensity or global_config.default_mop_intensity
+                    for _sid, config, _overdue in room_group
+                    if config.mop_intensity or global_config.default_mop_intensity
+                ),
+                None,
+            )
+
         if dry_run:
             continue
 
@@ -336,7 +358,7 @@ async def async_handle_evaluate_batch(
                 all_area_ids,
                 needs_mopping=grp_needs_mopping,
                 fan_speed=fan_speed,
-                mop_intensity=mop_intensity,
+                mop_intensity=trigger_mop_intensity,
             )
         except HomeAssistantError as exc:
             error_msg = f"Failed to trigger cleaning for {room_names} on {vacuum_ent}: {exc}"

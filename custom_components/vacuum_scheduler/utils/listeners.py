@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 from custom_components.vacuum_scheduler.const import DOMAIN, LOGGER, SERVICE_EVALUATE_BATCH
 from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
 from custom_components.vacuum_scheduler.service_actions.evaluate_batch import (
-    ATTR_DRY_RUN,
     ATTR_VACUUM_ENTITY,
     async_handle_evaluate_batch,
 )
@@ -58,11 +57,14 @@ async def async_setup_door_listeners(
             return
 
         for vacuum_entity in vacuum_entities:
+            # No dry_run override: the evaluation falls back to the global
+            # dry-run setting, so door-triggered cleaning is simulated when
+            # global dry run is enabled.
             call = ServiceCall(
                 hass=hass,
                 domain=DOMAIN,
                 service=SERVICE_EVALUATE_BATCH,
-                data={ATTR_VACUUM_ENTITY: vacuum_entity, ATTR_DRY_RUN: False},
+                data={ATTR_VACUUM_ENTITY: vacuum_entity},
             )
             try:
                 await async_handle_evaluate_batch(hass, entry, call)

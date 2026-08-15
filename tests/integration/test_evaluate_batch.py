@@ -86,12 +86,37 @@ async def test_groups_rooms_on_same_vacuum(hass, entry_with_rooms, vacuum_calls)
 
     await hass.services.async_call(DOMAIN, "evaluate_batch", {}, blocking=True)
 
+    # Vacuum-only group: the water box is reset to OFF first (kitchen has
+    # mopping configured), then fan speed, then one combined clean_area.
+    assert [call["service"] for call in vacuum_calls] == ["send_command", "set_fan_speed", "clean_area"]
+    assert vacuum_calls[0] == {
+        "service": "send_command",
+        "entity_id": KITCHEN_ROBOT,
+        "command": "set_water_box_custom_mode",
+        "params": [200],  # MOP_INTENSITY_COMMAND_MAP["off"] — reset for vacuum-only group
+    }
     clean_calls = _clean_calls(vacuum_calls)
     assert len(clean_calls) == 1
     assert clean_calls[0]["entity_id"] == KITCHEN_ROBOT
     assert clean_calls[0]["segments"] == [KITCHEN_SEGMENT, LIVING_SEGMENT]
-    # Vacuum-only group: no mop mode command.
-    assert all(call["service"] != "send_command" for call in vacuum_calls)
+
+
+async def test_vacuum_only_group_resets_water_box_to_off(hass, entry_with_rooms, vacuum_calls):
+    """A vacuum-only group with mopping configured resets the water box to OFF."""
+    entry, kitchen_sid, _living_sid = entry_with_rooms
+    await _open_doors(hass)
+    # Kitchen overdue for vacuuming only; mop was done recently (seed: 1 h ago).
+    _stale(entry, kitchen_sid, vacuum_days=10)
+
+    await hass.services.async_call(DOMAIN, "evaluate_batch", {}, blocking=True)
+
+    assert [call["service"] for call in vacuum_calls] == ["send_command", "set_fan_speed", "clean_area"]
+    assert vacuum_calls[0] == {
+        "service": "send_command",
+        "entity_id": KITCHEN_ROBOT,
+        "command": "set_water_box_custom_mode",
+        "params": [200],  # MOP_INTENSITY_COMMAND_MAP["off"]
+    }
 
 
 async def test_separates_mopping_and_vacuum_only_groups(hass, entry_with_rooms, vacuum_calls):

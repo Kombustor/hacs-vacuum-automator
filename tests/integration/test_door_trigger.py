@@ -117,6 +117,26 @@ async def test_door_reopen_after_cleaning_does_not_reclean(hass, entry_with_room
     assert len(clean_calls) == 1
 
 
+async def test_global_dry_run_blocks_door_trigger(hass, entry_with_rooms, vacuum_calls, notify_calls):
+    """Global dry run applies to door-triggered evaluations: no real cleaning."""
+    entry, kitchen_sid, _living_sid = entry_with_rooms
+    entry.runtime_data.global_config.global_dry_run = True
+    _make_kitchen_stale(entry, kitchen_sid)
+
+    set_state(hass, KITCHEN_DOOR, "on")
+    await hass.async_block_till_done()
+    await fire_after(hass, timedelta(minutes=5))
+
+    # The door listener must not force a real run when global dry run is on.
+    assert vacuum_calls == []
+    # Evaluation still happened and reported as a dry run.
+    assert len(notify_calls) == 1
+    assert notify_calls[0]["title"] == "Vacuum Scheduler - Dry Run"
+    # Timestamps are not updated by a dry run.
+    state = entry.runtime_data.room_states[kitchen_sid]
+    assert state.last_vacuumed < dt_util.now() - timedelta(days=9)
+
+
 async def test_door_unknown_during_stabilization_cancels_timer(hass, entry_with_rooms, vacuum_calls):
     """A door going unknown (zigbee down) during stabilization cancels the trigger."""
     entry, kitchen_sid, _living_sid = entry_with_rooms
