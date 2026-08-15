@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from custom_components.vacuum_scheduler.const import (
@@ -14,6 +13,7 @@ from custom_components.vacuum_scheduler.const import (
 from custom_components.vacuum_scheduler.data import VacuumSchedulerConfigEntry
 from custom_components.vacuum_scheduler.utils import async_save_room_states
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
 # Service call attributes
@@ -50,9 +50,16 @@ async def async_handle_record_cleaning(
     mode = call.data[ATTR_MODE]
     timestamp_str = call.data.get(ATTR_TIMESTAMP)
 
-    # Parse timestamp or use now
+    # Parse timestamp or use now. Naive timestamps are treated as local time
+    # and invalid formats are rejected up front, so storage always holds
+    # tz-aware timestamps (safe to compare with dt_util.now() after reload).
     if timestamp_str:
-        timestamp = datetime.fromisoformat(timestamp_str)
+        parsed_timestamp = dt_util.parse_datetime(timestamp_str)
+        if parsed_timestamp is None:
+            raise ServiceValidationError(
+                f"Invalid timestamp format: {timestamp_str!r}; expected ISO format (e.g. 2026-06-10T09:30:00)"
+            )
+        timestamp = dt_util.as_local(parsed_timestamp)
     else:
         timestamp = dt_util.now()
 

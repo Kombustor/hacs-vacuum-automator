@@ -42,7 +42,7 @@ record_cleaning:
       example: vacuum
     timestamp:
       name: Timestamp
-      description: Optional ISO format timestamp. Defaults to now.
+      description: Optional ISO format timestamp; naive values are treated as local time. Defaults to now.
       selector:
         text:
       example: "2026-06-10T09:30:00"

@@ -11,6 +11,7 @@ from custom_components.vacuum_scheduler.utils.storage import (
     room_state_from_dict,
     room_state_to_dict,
 )
+from homeassistant.util import dt as dt_util
 
 
 class TestAsyncLoadRoomStates:
@@ -141,8 +142,9 @@ class TestRoomStateFromDict:
 
         assert isinstance(result, RoomState)
         assert result.enabled is True
-        assert result.last_vacuumed == datetime(2024, 1, 1, 10, 0, 0)
-        assert result.last_mopped == datetime(2024, 1, 2, 10, 0, 0)
+        # Naive stored timestamps are localized to tz-aware datetimes.
+        assert result.last_vacuumed == dt_util.as_local(datetime(2024, 1, 1, 10, 0, 0))
+        assert result.last_mopped == dt_util.as_local(datetime(2024, 1, 2, 10, 0, 0))
 
     def test_handles_missing_optional_fields(self):
         """Test conversion handles missing optional fields."""

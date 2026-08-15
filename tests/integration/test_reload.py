@@ -86,6 +86,35 @@ async def test_record_cleaning_persistence_across_reload(hass, entry_with_rooms)
     assert hass.states.get(overdue).state == STATE_OFF
 
 
+async def test_naive_persisted_timestamp_does_not_break_setup(hass, entry_with_rooms):
+    """Legacy storage with naive timestamps loads as tz-aware; setup succeeds.
+
+    Regression: record_cleaning with a naive ISO timestamp (e.g. a backdated
+    reset) previously persisted a naive datetime, which crashed the
+    coordinator's first refresh with "can't compare offset-naive and
+    offset-aware datetimes" and left the entry in a retry loop.
+    """
+    entry, kitchen_sid, _living_sid = entry_with_rooms
+
+    # Simulate storage written by the old code (naive, no offset).
+    store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
+    data = await store.async_load()
+    data["rooms"][kitchen_sid]["last_vacuumed"] = "2020-01-01T00:00:00"
+    data["rooms"][kitchen_sid]["last_mopped"] = "2020-01-01T00:00:00"
+    await store.async_save(data)
+
+    await _reload_entry(hass, entry)
+    await fire_refresh(hass)
+
+    state = entry.runtime_data.room_states[kitchen_sid]
+    assert state.last_vacuumed is not None
+    assert state.last_vacuumed.tzinfo is not None
+    # The coordinator computed days_since_* without crashing.
+    coordinator_data = entry.runtime_data.coordinator.data[kitchen_sid]
+    assert coordinator_data["days_since_vacuum"] is not None
+    assert coordinator_data["days_since_vacuum"] > 1000
+
+
 async def test_storage_survives_reload(hass, entry_with_rooms):
     """The persisted storage blob is intact after a reload."""
     entry, kitchen_sid, _living_sid = entry_with_rooms

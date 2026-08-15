@@ -14,6 +14,8 @@ from custom_components.vacuum_scheduler.const import (
 )
 from custom_components.vacuum_scheduler.data import RoomConfig, RoomState, VacuumSchedulerData
 from custom_components.vacuum_scheduler.service_actions.record_cleaning import async_handle_record_cleaning
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 
 
 class TestAsyncHandleRecordCleaning:
@@ -111,7 +113,18 @@ class TestAsyncHandleRecordCleaning:
 
         assert result["success"] is True
         room_state = sample_entry.runtime_data.room_states["room_001"]
-        assert room_state.last_vacuumed == datetime(2024, 6, 15, 14, 30, 0)
+        # Naive timestamps are treated as local time -> tz-aware result.
+        assert room_state.last_vacuumed == dt_util.as_local(datetime(2024, 6, 15, 14, 30, 0))
+
+    async def test_rejects_invalid_timestamp(self, mock_hass, sample_entry, mock_call):
+        """Test an unparseable timestamp raises ServiceValidationError."""
+        mock_call.data["timestamp"] = "not-a-date"
+        mock_call.data["mode"] = CLEANING_MODE_VACUUM
+
+        with pytest.raises(ServiceValidationError):
+            await async_handle_record_cleaning(mock_hass, sample_entry, mock_call)
+
+        sample_entry.runtime_data.storage.async_save.assert_not_called()
 
     async def test_returns_false_when_room_not_found(self, mock_hass, sample_entry, mock_call):
         """Test returns False when room name not found."""

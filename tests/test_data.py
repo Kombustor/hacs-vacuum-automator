@@ -18,6 +18,7 @@ from custom_components.vacuum_scheduler.const import (
     CONF_WINDOW_SENSOR,
 )
 from custom_components.vacuum_scheduler.data import GlobalConfig, RoomConfig, RoomState
+from homeassistant.util import dt as dt_util
 
 
 class TestRoomConfig:
@@ -150,8 +151,10 @@ class TestRoomConfig:
         state = RoomState.from_dict(data)
 
         assert state.enabled is True
-        assert state.last_vacuumed == datetime(2024, 1, 15, 10, 30, 0)
-        assert state.last_mopped == datetime(2024, 1, 14, 14, 0, 0)
+        # Timestamps are always tz-aware (naive input is localized).
+        assert state.last_vacuumed == dt_util.as_local(datetime(2024, 1, 15, 10, 30, 0))
+        assert state.last_mopped == dt_util.as_local(datetime(2024, 1, 14, 14, 0, 0))
+        assert state.last_vacuumed.tzinfo is not None
 
     def test_from_dict_handles_none_values(self):
         """Test RoomState handles None values in dict."""

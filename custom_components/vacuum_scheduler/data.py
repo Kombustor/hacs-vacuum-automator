@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
     from .coordinator import VacuumSchedulerCoordinator
@@ -85,14 +86,20 @@ class RoomState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RoomState:
-        """Deserialize from storage."""
+        """Deserialize from storage.
+
+        Stored timestamps may be naive (e.g. written by record_cleaning with a
+        naive ISO string). They are localized to HA's timezone so all
+        RoomState datetimes are tz-aware and safe to compare with
+        ``dt_util.now()``.
+        """
         last_vacuumed = None
         last_mopped = None
 
         if data.get("last_vacuumed"):
-            last_vacuumed = datetime.fromisoformat(data["last_vacuumed"])
+            last_vacuumed = dt_util.as_local(datetime.fromisoformat(data["last_vacuumed"]))
         if data.get("last_mopped"):
-            last_mopped = datetime.fromisoformat(data["last_mopped"])
+            last_mopped = dt_util.as_local(datetime.fromisoformat(data["last_mopped"]))
 
         return cls(
             last_vacuumed=last_vacuumed,

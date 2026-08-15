@@ -84,7 +84,43 @@ async def test_record_explicit_timestamp(hass, entry_with_rooms):
         blocking=True,
     )
 
-    assert entry.runtime_data.room_states[kitchen_sid].last_vacuumed == datetime.fromisoformat(timestamp)
+    assert entry.runtime_data.room_states[kitchen_sid].last_vacuumed == dt_util.as_local(
+        datetime.fromisoformat(timestamp)
+    )
+
+
+async def test_record_naive_timestamp_treated_as_local(hass, entry_with_rooms):
+    """A naive timestamp is localized, never stored naive (setup-safe)."""
+    entry, kitchen_sid, _living_sid = entry_with_rooms
+
+    await hass.services.async_call(
+        DOMAIN,
+        "record_cleaning",
+        {"room_name": "Kitchen", "mode": "vacuum", "timestamp": "2026-06-14T07:30:00"},
+        blocking=True,
+    )
+
+    state = entry.runtime_data.room_states[kitchen_sid]
+    assert state.last_vacuumed == dt_util.as_local(datetime(2026, 6, 14, 7, 30))
+    assert state.last_vacuumed.tzinfo is not None
+
+
+async def test_record_invalid_timestamp_raises_validation_error(hass, entry_with_rooms):
+    """A malformed timestamp is rejected with ServiceValidationError."""
+    entry, kitchen_sid, _living_sid = entry_with_rooms
+    state = entry.runtime_data.room_states[kitchen_sid]
+    before = state.last_vacuumed
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "record_cleaning",
+            {"room_name": "Kitchen", "mode": "vacuum", "timestamp": "not-a-date"},
+            blocking=True,
+        )
+
+    # Nothing was recorded.
+    assert state.last_vacuumed == before
 
 
 async def test_unknown_room_raises_validation_error(hass, entry_with_rooms):
